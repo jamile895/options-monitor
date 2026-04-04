@@ -666,7 +666,7 @@ function renderTable(rows) {
 }
 
 // ── Stats ──
-function updateStats(rows, spot) {
+function updateStats(rows, spot, apiKey) {
   const calls = rows.filter(r=>r.type==='CALL'), puts = rows.filter(r=>r.type==='PUT');
   const cv = calls.reduce((s,r)=>s+r.vol,0), pv = puts.reduce((s,r)=>s+r.vol,0);
   const tot = cv+pv||1;
@@ -681,7 +681,7 @@ function updateStats(rows, spot) {
   document.getElementById('sPCR').style.color  = pcr<.7?'var(--call)':pcr>1.2?'var(--put)':'var(--textw)';
   document.getElementById('sUOA').textContent  = uoa;
   document.getElementById('sSPOT').textContent = `$${spot.toFixed(2)}`;
-  document.getElementById('sSPOTs').textContent= 'prezzo simulato';
+  document.getElementById('sSPOTs').textContent = apiKey ? 'chiusura precedente' : 'prezzo simulato';
   const cp = cv/tot*100;
   document.getElementById('pcrC').style.width = cp+'%';
   document.getElementById('pcrP').style.width = (100-cp)+'%';
@@ -890,10 +890,24 @@ function updateApiStatus(hasKey) {
 // ── Fetch reale da Polygon.io ──
 async function fetchPolygonData(ticker, apiKey) {
   try {
-    // 1. Prezzo spot
-    const quoteRes = await fetch(`https://api.polygon.io/v2/last/trade/${ticker}?apiKey=${apiKey}`);
-    const quoteData = await quoteRes.json();
-    const spot = quoteData?.results?.p || null;
+    // 1. Prezzo spot — usiamo previous close che è sempre disponibile nel free tier
+    let spot = null;
+    try {
+      const prevRes = await fetch(`https://api.polygon.io/v2/aggs/ticker/${ticker}/prev?adjusted=true&apiKey=${apiKey}`);
+      const prevData = await prevRes.json();
+      if (prevData?.results?.[0]?.c) {
+        spot = prevData.results[0].c;
+      }
+    } catch(e) {}
+
+    // Fallback: prezzo dal ticker snapshot
+    if (!spot) {
+      try {
+        const snapRes = await fetch(`https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers/${ticker}?apiKey=${apiKey}`);
+        const snapData = await snapRes.json();
+        spot = snapData?.ticker?.day?.c || snapData?.ticker?.prevDay?.c || null;
+      } catch(e) {}
+    }
 
     // 2. Options chain (snapshot)
     const optRes = await fetch(`https://api.polygon.io/v3/snapshot/options/${ticker}?limit=100&apiKey=${apiKey}`);
@@ -999,7 +1013,7 @@ async function runScan() {
   const pcr = (pv/cv).toFixed(2);
 
   renderTable(allRows);
-  updateStats(allRows, spot);
+  updateStats(allRows, spot, apiKey);
   updateFeed(allRows, ticker);
 
   document.getElementById('tTitle').textContent = `OPTIONS CHAIN — ${ticker}`;
