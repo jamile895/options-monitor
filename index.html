@@ -982,67 +982,6 @@ async function fetchPolygonData(ticker, apiKey) {
   }
 }
 
-    // 2. Options chain (snapshot)
-    const optRes = await fetch(`https://api.polygon.io/v3/snapshot/options/${ticker}?limit=100&apiKey=${apiKey}`);
-    const optData = await optRes.json();
-
-    if (!optData?.results?.length) return null;
-
-    const rows = optData.results.map(o => {
-      const d = o.details || {};
-      const g = o.greeks || {};
-      const day = o.day || {};
-      const q = o.last_quote || {};
-
-      const type = d.contract_type === 'call' ? 'CALL' : 'PUT';
-      const strike = d.strike_price || 0;
-      const expiry = d.expiration_date || '';
-      const now = new Date();
-      const exp = new Date(expiry);
-      const days = Math.max(1, Math.round((exp - now) / (1000*60*60*24)));
-      const vol = day.volume || 0;
-      const oi = o.open_interest || 1;
-      const volOI = +(vol / Math.max(1, oi)).toFixed(2);
-      const iv = +((o.implied_volatility || 0.15) * 100).toFixed(1);
-      const delta = +(g.delta || 0).toFixed(2);
-      const bid = +(q.bid || 0).toFixed(2);
-      const ask = +(q.ask || 0).toFixed(2);
-      const prem = +((bid + ask) / 2).toFixed(2);
-      const execPrice = prem;
-      const mono = Math.abs((strike - (spot||500)) / (spot||500));
-
-      // Side detection
-      let side = '?', sideConf = 'basso';
-      if (bid > 0 && ask > 0) {
-        const mid = (bid + ask) / 2;
-        const spread = ask - bid;
-        if (execPrice >= ask - spread * 0.25) { side = 'BUY'; sideConf = 'medio'; }
-        else if (execPrice <= bid + spread * 0.25) { side = 'SELL'; sideConf = 'medio'; }
-      }
-
-      // UOA Score
-      let sc = 0;
-      sc += Math.min(40, volOI * 10);
-      sc += Math.min(20, vol / 1000);
-      sc += days < 14 ? 15 : days < 45 ? 8 : 3;
-      sc += mono < 0.03 ? 5 : 0;
-      sc += prem > 3 ? 10 : prem > 1 ? 5 : 0;
-      sc = Math.min(99, Math.floor(sc));
-
-      const expLabel = exp.toLocaleDateString('it-IT', {day:'2-digit', month:'short', year:'numeric'});
-
-      return { type, strike, expiry: expLabel, days, vol, oi, volOI, iv, delta, prem, bid, ask, execPrice, side, sideConf, sc, spike: volOI > 3 };
-    });
-
-    rows.sort((a, b) => b.sc - a.sc);
-    return { rows: rows.slice(0, 80), spot: spot || 485 };
-
-  } catch(e) {
-    console.error('Polygon error:', e);
-    return null;
-  }
-}
-
 // ── Main Scan ──
 async function runScan() {
   const ticker = document.getElementById('tickerIn').value.toUpperCase().trim() || 'VOO';
