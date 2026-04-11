@@ -231,11 +231,11 @@ if st.button("🚀 Scansiona mercato", type="primary", use_container_width=True)
         # Mostra solo colonne effettivamente presenti
         display_cols = [c for c in display_cols if c in final_df.columns]
 
-        st.dataframe(
+        st.dataframe(final_df[display_cols])
 import streamlit as st
 import pandas as pd
 import yfinance as yf
-import requests)
+import requests
 
 # =========================
 # TELEGRAM CONFIG
