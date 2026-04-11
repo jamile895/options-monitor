@@ -13,7 +13,7 @@ TELEGRAM_CHAT_ID = st.secrets["TELEGRAM_CHAT_ID"]
 # CONFIG UI
 # =========================
 st.set_page_config(layout="wide", page_title="Options Flow Scanner PRO")
-st.title("🔥 Options Flow Scanner PRO")
+st.title("🔥 Options Flow Scanner PRO 🔥 by Ugo Fortezze")
 
 # =========================
 # MODALITÀ
