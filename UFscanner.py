@@ -231,9 +231,8 @@ if st.button("🚀 Scansiona mercato", type="primary", use_container_width=True)
         display_cols = [c for c in display_cols if c in final_df.columns]
 
         st.dataframe(
-            final_df[display_cols]
-            .sort_values("FLOW_POWER_NUM", ascending=False)
-            .reset_index(drop=True),
+           final_df[display_cols]
+.reset_index(drop=True),
             use_container_width=True,
             hide_index=True,
         )
