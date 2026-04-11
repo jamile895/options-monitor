@@ -481,8 +481,6 @@ if st.button("🚀 Scansiona mercato", type="primary", use_container_width=True)
         st.warning("⚠️ Nessuna opportunità trovata. Prova ad allargare i filtri."),
             use_container_width=True,
             hide_index=True,
-        )
-
         if send_telegram and telegram_text:
             ok = send_telegram_message(telegram_text)
             if ok:
