@@ -84,27 +84,26 @@ def send_telegram_message(text):
 # =========================
 
 def get_underlying_price_polygon(ticker: str) -> float | None:
-    url = f"https://api.polygon.io/v2/last/trade/{ticker}"
-    params = {"apiKey": POLYGON_API_KEY}
-    try:
-        r = requests.get(url, params=params, timeout=8)
+        url = f"https://api.polygon.io/v2/last/trade/{ticker}"
+        params = {"apiKey": POLYGON_API_KEY}
+        try:
+            r = requests.get(url, params=params, timeout=8)
             if r.status_code == 200:
-            data = r.json()
-            res = data.get("results", {})
-            price = res.get("p") or res.get("c") or res.get("vw")
-            if price:
-                return round(float(price), 2)
-    except Exception:
-        pass
-    # fallback: previous close
-    try:
-        url2 = f"https://api.polygon.io/v2/aggs/ticker/{ticker}/prev"
-        r2 = requests.get(url2, params=params, timeout=8)
-        if r2.status_code == 200:
-            return round(r2.json()["results"][0]["c"], 2)
-    except Exception:
-        pass
-    return None
+                data = r.json()
+                res = data.get("results", {})
+                price = res.get("p") or res.get("c") or res.get("vw")
+                if price:
+                    return round(float(price), 2)
+        except Exception:
+            pass
+        try:
+            url2 = f"https://api.polygon.io/v2/aggs/ticker/{ticker}/prev"
+            r2 = requests.get(url2, params=params, timeout=8)
+            if r2.status_code == 200:
+                return round(r2.json()["results"][0]["c"], 2)
+        except Exception:
+            pass
+        return None
 
 
 # =========================
