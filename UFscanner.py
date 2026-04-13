@@ -22,31 +22,76 @@ st.caption("Powered by Polygon.io — Greeks included")
 # =========================
 mode = st.radio(
     "Modalità Trading",
-    ["MANUALE", "BASE", "AGGRESSIVO", "SNIPER", "HOT ONLY"],
+    ["SMALL CAP", "MID CAP", "BIG CAP", "SNIPER", "HOT ONLY"],
     horizontal=True
 )
 
 # =========================
-# PRESET
+# PRESET PER CAPITALIZZAZIONE + MODALITÀ
 # =========================
 PRESETS = {
-    "MANUALE":    {"volume_min": 1000, "voi_min": 1.5, "dte_max": 30, "strike_distance": 10, "spread_max": 0.5},
-    "BASE":       {"volume_min": 500,  "voi_min": 1.2, "dte_max": 30, "strike_distance": 15, "spread_max": 0.8},
-    "AGGRESSIVO": {"volume_min": 300,  "voi_min": 1.0, "dte_max": 45, "strike_distance": 20, "spread_max": 1.0},
-    "SNIPER":     {"volume_min": 2000, "voi_min": 2.0, "dte_max": 10, "strike_distance": 5,  "spread_max": 0.3},
-    "HOT ONLY":   {"volume_min": 5000, "voi_min": 3.0, "dte_max": 7,  "strike_distance": 3,  "spread_max": 0.2},
+    "SMALL CAP": {
+        "volume_min": 200,
+        "voi_min": 2.0,
+        "dte_max": 20,
+        "strike_distance": 15,
+        "spread_max": 1.5,
+        "flow_min": 10_000,
+        "desc": "Small Cap (<$2B) — parametri adattati a bassa liquidità"
+    },
+    "MID CAP": {
+        "volume_min": 500,
+        "voi_min": 1.5,
+        "dte_max": 30,
+        "strike_distance": 12,
+        "spread_max": 1.0,
+        "flow_min": 50_000,
+        "desc": "Mid Cap ($2B-$10B) — bilanciato tra liquidità e segnale"
+    },
+    "BIG CAP": {
+        "volume_min": 1000,
+        "voi_min": 1.2,
+        "dte_max": 45,
+        "strike_distance": 10,
+        "spread_max": 0.5,
+        "flow_min": 100_000,
+        "desc": "Big Cap (>$10B) — alta liquidità, filtri standard"
+    },
+    "SNIPER": {
+        "volume_min": 2000,
+        "voi_min": 2.0,
+        "dte_max": 10,
+        "strike_distance": 5,
+        "spread_max": 0.3,
+        "flow_min": 100_000,
+        "desc": "SNIPER — strike vicino, scadenza breve, alta pressione"
+    },
+    "HOT ONLY": {
+        "volume_min": 5000,
+        "voi_min": 3.0,
+        "dte_max": 7,
+        "strike_distance": 3,
+        "spread_max": 0.2,
+        "flow_min": 200_000,
+        "desc": "HOT ONLY — solo flussi anomali estremi, scadenza imminente"
+    },
 }
 
 preset = PRESETS[mode]
+st.caption(f"ℹ️ {preset['desc']}")
 
+# =========================
+# SLIDERS CON VALORI DAL PRESET
+# =========================
 col_s1, col_s2 = st.columns(2)
 with col_s1:
-    volume_min      = st.slider("Volume minimo",      0,     10000, preset["volume_min"],           key=f"vol_{mode}")
+    volume_min      = st.slider("Volume minimo",      0,     10000, preset["volume_min"],                key=f"vol_{mode}")
     voi_min         = st.slider("VOI minimo",          0.0,   10.0,  float(preset["voi_min"]),  step=0.1, key=f"voi_{mode}")
-    dte_max         = st.slider("DTE max",             1,     60,    preset["dte_max"],               key=f"dte_{mode}")
+    dte_max         = st.slider("DTE max",             1,     60,    preset["dte_max"],                   key=f"dte_{mode}")
 with col_s2:
-    strike_distance = st.slider("Distanza strike %",  1,     20,    preset["strike_distance"],       key=f"str_{mode}")
-    spread_max      = st.slider("Spread bid/ask max", 0.05,  2.0,   float(preset["spread_max"]), step=0.05, key=f"spd_{mode}")
+    strike_distance = st.slider("Distanza strike %",  1,     25,    preset["strike_distance"],           key=f"str_{mode}")
+    spread_max      = st.slider("Spread bid/ask max", 0.05,  3.0,   float(preset["spread_max"]), step=0.05, key=f"spd_{mode}")
+    flow_min        = st.slider("Flow Power min ($)", 5_000, 500_000, preset["flow_min"], step=5_000,    key=f"flw_{mode}")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -118,10 +163,10 @@ def get_underlying_price_polygon(ticker: str) -> float | None:
 # =========================
 
 def get_options_chain_polygon(ticker: str, dte_max: int) -> list[dict]:
-    today      = datetime.today().date()
-    exp_max    = (today + timedelta(days=dte_max)).isoformat()
-    all_rows   = []
-    url        = f"https://api.polygon.io/v3/snapshot/options/{ticker}"
+    today   = datetime.today().date()
+    exp_max = (today + timedelta(days=dte_max)).isoformat()
+    all_rows = []
+    url     = f"https://api.polygon.io/v3/snapshot/options/{ticker}"
 
     params = {
         "apiKey":              POLYGON_API_KEY,
@@ -162,10 +207,10 @@ def parse_polygon_options(raw_results: list[dict], underlying: float, ticker: st
     today = pd.Timestamp.today().normalize()
 
     for item in raw_results:
-        details  = item.get("details", {})
-        greeks   = item.get("greeks", {})
-        day      = item.get("day", {})
-        quotes   = item.get("last_quote", {})
+        details = item.get("details", {})
+        greeks  = item.get("greeks", {})
+        day     = item.get("day", {})
+        quotes  = item.get("last_quote", {})
 
         contract_type = details.get("contract_type", "").upper()
         strike        = details.get("strike_price")
@@ -184,26 +229,26 @@ def parse_polygon_options(raw_results: list[dict], underlying: float, ticker: st
         ask    = quotes.get("ask") or 0
         iv     = item.get("implied_volatility") or 0
 
-        delta  = greeks.get("delta")
-        gamma  = greeks.get("gamma")
-        theta  = greeks.get("theta")
-        vega   = greeks.get("vega")
+        delta = greeks.get("delta")
+        gamma = greeks.get("gamma")
+        theta = greeks.get("theta")
+        vega  = greeks.get("vega")
 
         rows.append({
-            "ticker_sym":  ticker_sym,
-            "type":        contract_type,
-            "strike":      strike,
-            "expiration":  exp_dt,
-            "volume":      volume,
-            "OI":          oi,
-            "LAST":        last,
-            "bid":         bid,
-            "ask":         ask,
-            "IV":          round(iv * 100, 1) if iv else None,
-            "delta":       round(delta, 3) if delta else None,
-            "gamma":       round(gamma, 4) if gamma else None,
-            "theta":       round(theta, 3) if theta else None,
-            "vega":        round(vega, 3) if vega else None,
+            "ticker_sym": ticker_sym,
+            "type":       contract_type,
+            "strike":     strike,
+            "expiration": exp_dt,
+            "volume":     volume,
+            "OI":         oi,
+            "LAST":       last,
+            "bid":        bid,
+            "ask":        ask,
+            "IV":         round(iv * 100, 1) if iv else None,
+            "delta":      round(delta, 3) if delta else None,
+            "gamma":      round(gamma, 4) if gamma else None,
+            "theta":      round(theta, 3) if theta else None,
+            "vega":       round(vega, 3) if vega else None,
         })
 
     if not rows:
@@ -218,12 +263,13 @@ def parse_polygon_options(raw_results: list[dict], underlying: float, ticker: st
     df["SPREAD"]         = df["ask"] - df["bid"]
     df["UNDER"]          = underlying
 
+    # --- FILTRI ---
     df = df[df["volume"]           >= volume_min]
     df = df[df["VOI"]              >= voi_min]
     df = df[df["DTE"]              <= dte_max]
     df = df[df["DTE"]              >= 0]
     df = df[df["DIST_STRIKE"]      <= strike_distance]
-    df = df[df["FLOW_POWER_NUM"]   >= 100_000]
+    df = df[df["FLOW_POWER_NUM"]   >= flow_min]
     df = df[df["SPREAD"]           <= spread_max]
 
     if option_type != "BOTH":
