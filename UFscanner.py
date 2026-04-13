@@ -81,8 +81,10 @@ PRESETS = {
 preset = PRESETS[mode]
 st.caption(f"ℹ️ {preset['desc']}")
 
-# Forza reset sliders quando cambia modalità
-if "last_mode" not in st.session_state or st.session_state["last_mode"] != mode:
+# Forza reset sliders quando cambia modalità o versione
+APP_VERSION = "2.1"
+if "last_mode" not in st.session_state or st.session_state["last_mode"] != mode or st.session_state.get("app_version") != APP_VERSION:
+    st.session_state["app_version"] = APP_VERSION
     st.session_state["last_mode"]    = mode
     st.session_state["volume_min"]   = preset["volume_min"]
     st.session_state["voi_min"]      = float(preset["voi_min"])
