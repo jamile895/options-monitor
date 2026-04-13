@@ -363,7 +363,7 @@ if st.button("🚀 Scansiona mercato", type="primary", use_container_width=True)
             final_df[display_cols]
             .reset_index(drop=True)
             .style
-            .applymap(highlight_sig, subset=["SIG"])
+            .map(highlight_sig, subset=["SIG"])
             .format({
                 "IV":    lambda x: f"{x:.1f}%" if pd.notna(x) else "—",
                 "delta": lambda x: f"{x:.3f}"  if pd.notna(x) else "—",
