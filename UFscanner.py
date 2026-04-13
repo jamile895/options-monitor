@@ -348,7 +348,9 @@ def get_options_data(ticker: str) -> pd.DataFrame:
         st.warning(f"⚠️ Nessun dato opzioni ricevuto da Polygon per {ticker}")
         return pd.DataFrame()
 
+    st.info(f"📊 DEBUG: {len(raw)} contratti ricevuti da Polygon per {ticker}")
     df = parse_polygon_options(raw, underlying, ticker)
+    st.info(f"📊 DEBUG: {len(df)} contratti dopo i filtri")
     return df
 
 
