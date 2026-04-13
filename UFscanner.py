@@ -235,9 +235,13 @@ def parse_polygon_options(raw_results: list[dict], underlying: float, ticker: st
 
         volume = day.get("volume") or 0
         oi     = item.get("open_interest") or 0
-        last   = day.get("close") or day.get("last") or 0
         bid    = quotes.get("bid") or 0
         ask    = quotes.get("ask") or 0
+        # Usa close, poi midpoint bid/ask, poi prev_close come fallback
+        last   = (day.get("close") or
+                  day.get("vwap") or
+                  ((bid + ask) / 2 if (bid > 0 or ask > 0) else 0) or
+                  day.get("previous_close") or 0)
         iv     = item.get("implied_volatility") or 0
 
         delta = greeks.get("delta")
