@@ -14,7 +14,7 @@ POLYGON_API_KEY  = st.secrets["POLYGON_API_KEY"]
 # CONFIG UI
 # =========================
 st.set_page_config(layout="wide", page_title="Options Flow Scanner PRO")
-st.title("🔥 Options Flow Scanner PRO")
+st.title("🔥 Options Flow Scanner PRO 🔥 by Ugo Fortezze")
 st.caption("Powered by Polygon.io — Greeks included")
 
 # =========================
