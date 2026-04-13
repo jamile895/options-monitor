@@ -96,13 +96,13 @@ if "last_mode" not in st.session_state or st.session_state["last_mode"] != mode:
 # =========================
 col_s1, col_s2 = st.columns(2)
 with col_s1:
-    volume_min      = st.slider("Volume minimo",      0,      10000,   st.session_state["volume_min"],              key="volume_min")
-    voi_min         = st.slider("VOI minimo",          0.0,    10.0,    st.session_state["voi_min"],    step=0.1,    key="voi_min")
-    dte_max         = st.slider("DTE max",             1,      60,      st.session_state["dte_max"],                 key="dte_max")
+    volume_min      = st.slider("Volume minimo",      0,      50000,   st.session_state["volume_min"],              key="volume_min")
+    voi_min         = st.slider("VOI minimo",          0.0,    20.0,    st.session_state["voi_min"],    step=0.1,    key="voi_min")
+    dte_max         = st.slider("DTE max",             1,      365,     st.session_state["dte_max"],                 key="dte_max")
 with col_s2:
-    strike_distance = st.slider("Distanza strike %",  1,      25,      st.session_state["strike_dist"],             key="strike_dist")
-    spread_max      = st.slider("Spread bid/ask max", 0.05,   3.0,     st.session_state["spread_max"], step=0.05,   key="spread_max")
-    flow_min        = st.slider("Flow Power min ($)", 5_000,  500_000, st.session_state["flow_min"],   step=5_000,  key="flow_min")
+    strike_distance = st.slider("Distanza strike %",  1,      50,      st.session_state["strike_dist"],             key="strike_dist")
+    spread_max      = st.slider("Spread bid/ask max", 0.05,   20.0,    st.session_state["spread_max"], step=0.05,   key="spread_max")
+    flow_min        = st.slider("Flow Power min ($)", 1_000,  1_000_000, st.session_state["flow_min"], step=1_000,  key="flow_min")
 
 col1, col2 = st.columns(2)
 with col1:
