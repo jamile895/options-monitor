@@ -104,7 +104,7 @@ with col_s1:
 with col_s2:
     strike_distance = st.slider("Distanza strike %",  1,      50,      st.session_state["strike_dist"],             key="strike_dist")
     spread_max      = st.slider("Spread bid/ask max", 0.05,   20.0,    st.session_state["spread_max"], step=0.05,   key="spread_max")
-    flow_min        = st.slider("Flow Power min ($)", 1_000,  1_000_000, st.session_state["flow_min"], step=1_000,  key="flow_min")
+    flow_min        = st.slider("Flow Power min ($)", 0,  1_000_000, st.session_state["flow_min"], step=1_000,  key="flow_min")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -271,12 +271,7 @@ def parse_polygon_options(raw_results: list[dict], underlying: float, ticker: st
 
     df = pd.DataFrame(rows)
 
-    # Se LAST < 0.01 usa OI come proxy per non scartare contratti liquidi
-    df["LAST"] = df["LAST"].apply(lambda x: x if x >= 0.01 else 0)
-    df["FLOW_POWER_NUM"] = df.apply(
-        lambda r: r["volume"] * r["LAST"] if r["LAST"] > 0 else r["volume"] * 0.01,
-        axis=1
-    )
+    df["FLOW_POWER_NUM"] = df["volume"] * df["LAST"]
     df["VOI"]            = df["volume"] / df["OI"].replace(0, 1)
     df["DTE"]            = (df["expiration"] - today).dt.days
     df["DIST_STRIKE"]    = (df["strike"] - underlying).abs() / underlying * 100
@@ -293,9 +288,11 @@ def parse_polygon_options(raw_results: list[dict], underlying: float, ticker: st
     df = df[df["DTE"]              <= dte_max]
     df = df[df["DTE"]              >= 0]
     df = df[df["DIST_STRIKE"]      <= strike_distance]
-    df = df[df["FLOW_POWER_NUM"]   >= flow_min]
     # Applica filtro spread solo se il dato è disponibile
     df = df[(df["SPREAD"].isna()) | (df["SPREAD"] <= spread_max)]
+    # Applica filtro flow power solo se > 0
+    if flow_min > 0:
+        df = df[df["FLOW_POWER_NUM"] >= flow_min]
 
     if option_type != "BOTH":
         df = df[df["type"] == option_type]
