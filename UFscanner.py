@@ -84,13 +84,13 @@ def send_telegram_message(text):
 # =========================
 
 def get_underlying_price_polygon(ticker: str) -> float | None:
-        url = f"https://api.polygon.io/v2/last/trade/{ticker}"
+        url = f"https://api.polygon.io/v3/snapshot/options/{ticker}"
         params = {"apiKey": POLYGON_API_KEY}
         try:
             r = requests.get(url, params=params, timeout=8)
             if r.status_code == 200:
                 data = r.json()
-                res = data.get("results", {})
+                res = data.get("results", [{}])[0].get("underlying_asset", {})
                 price = res.get("p") or res.get("c") or res.get("vw")
                 if price:
                     return round(float(price), 2)
