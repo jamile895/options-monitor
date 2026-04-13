@@ -89,7 +89,11 @@ def get_underlying_price_polygon(ticker: str) -> float | None:
     try:
         r = requests.get(url, params=params, timeout=8)
         if r.status_code == 200:
-            return round(r.json()["results"]["p"], 2)
+            data = r.json()
+res = data.get("results", {})
+price = res.get("p") or res.get("c") or res.get("vw")
+if price:
+    return round(float(price), 2)
     except Exception:
         pass
     # fallback: previous close
