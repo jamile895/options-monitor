@@ -271,7 +271,12 @@ def parse_polygon_options(raw_results: list[dict], underlying: float, ticker: st
 
     df = pd.DataFrame(rows)
 
-    df["FLOW_POWER_NUM"] = df["volume"] * df["LAST"]
+    # Se LAST < 0.01 usa OI come proxy per non scartare contratti liquidi
+    df["LAST"] = df["LAST"].apply(lambda x: x if x >= 0.01 else 0)
+    df["FLOW_POWER_NUM"] = df.apply(
+        lambda r: r["volume"] * r["LAST"] if r["LAST"] > 0 else r["volume"] * 0.01,
+        axis=1
+    )
     df["VOI"]            = df["volume"] / df["OI"].replace(0, 1)
     df["DTE"]            = (df["expiration"] - today).dt.days
     df["DIST_STRIKE"]    = (df["strike"] - underlying).abs() / underlying * 100
@@ -352,9 +357,7 @@ def get_options_data(ticker: str) -> pd.DataFrame:
         st.warning(f"⚠️ Nessun dato opzioni ricevuto da Polygon per {ticker}")
         return pd.DataFrame()
 
-    st.info(f"📊 DEBUG: {len(raw)} contratti ricevuti da Polygon per {ticker}")
     df = parse_polygon_options(raw, underlying, ticker)
-    st.info(f"📊 DEBUG: {len(df)} contratti dopo i filtri")
     return df
 
 
