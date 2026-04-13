@@ -23,11 +23,12 @@ st.caption("Powered by Polygon.io — Greeks included")
 mode = st.radio(
     "Modalità Trading",
     ["SMALL CAP", "MID CAP", "BIG CAP", "SNIPER", "HOT ONLY"],
-    horizontal=True
+    horizontal=True,
+    key="mode_radio"
 )
 
 # =========================
-# PRESET PER CAPITALIZZAZIONE + MODALITÀ
+# PRESET PER CAPITALIZZAZIONE
 # =========================
 PRESETS = {
     "SMALL CAP": {
@@ -80,18 +81,28 @@ PRESETS = {
 preset = PRESETS[mode]
 st.caption(f"ℹ️ {preset['desc']}")
 
+# Forza reset sliders quando cambia modalità
+if "last_mode" not in st.session_state or st.session_state["last_mode"] != mode:
+    st.session_state["last_mode"]    = mode
+    st.session_state["volume_min"]   = preset["volume_min"]
+    st.session_state["voi_min"]      = float(preset["voi_min"])
+    st.session_state["dte_max"]      = preset["dte_max"]
+    st.session_state["strike_dist"]  = preset["strike_distance"]
+    st.session_state["spread_max"]   = float(preset["spread_max"])
+    st.session_state["flow_min"]     = preset["flow_min"]
+
 # =========================
-# SLIDERS CON VALORI DAL PRESET
+# SLIDERS
 # =========================
 col_s1, col_s2 = st.columns(2)
 with col_s1:
-    volume_min      = st.slider("Volume minimo",      0,     10000, preset["volume_min"],                key=f"vol_{mode}")
-    voi_min         = st.slider("VOI minimo",          0.0,   10.0,  float(preset["voi_min"]),  step=0.1, key=f"voi_{mode}")
-    dte_max         = st.slider("DTE max",             1,     60,    preset["dte_max"],                   key=f"dte_{mode}")
+    volume_min      = st.slider("Volume minimo",      0,      10000,   st.session_state["volume_min"],              key="volume_min")
+    voi_min         = st.slider("VOI minimo",          0.0,    10.0,    st.session_state["voi_min"],    step=0.1,    key="voi_min")
+    dte_max         = st.slider("DTE max",             1,      60,      st.session_state["dte_max"],                 key="dte_max")
 with col_s2:
-    strike_distance = st.slider("Distanza strike %",  1,     25,    preset["strike_distance"],           key=f"str_{mode}")
-    spread_max      = st.slider("Spread bid/ask max", 0.05,  3.0,   float(preset["spread_max"]), step=0.05, key=f"spd_{mode}")
-    flow_min        = st.slider("Flow Power min ($)", 5_000, 500_000, preset["flow_min"], step=5_000,    key=f"flw_{mode}")
+    strike_distance = st.slider("Distanza strike %",  1,      25,      st.session_state["strike_dist"],             key="strike_dist")
+    spread_max      = st.slider("Spread bid/ask max", 0.05,   3.0,     st.session_state["spread_max"], step=0.05,   key="spread_max")
+    flow_min        = st.slider("Flow Power min ($)", 5_000,  500_000, st.session_state["flow_min"],   step=5_000,  key="flow_min")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -129,7 +140,6 @@ def send_telegram_message(text):
 # =========================
 
 def get_underlying_price_polygon(ticker: str) -> float | None:
-    # Metodo 1: snapshot opzioni — close del giorno corrente
     url = f"https://api.polygon.io/v3/snapshot/options/{ticker}"
     params = {"apiKey": POLYGON_API_KEY, "limit": 1}
     try:
@@ -144,7 +154,6 @@ def get_underlying_price_polygon(ticker: str) -> float | None:
                     return round(float(price), 2)
     except Exception:
         pass
-    # Metodo 2: aggregati prev close
     try:
         url2 = f"https://api.polygon.io/v2/aggs/ticker/{ticker}/prev"
         params2 = {"apiKey": POLYGON_API_KEY}
@@ -260,17 +269,22 @@ def parse_polygon_options(raw_results: list[dict], underlying: float, ticker: st
     df["VOI"]            = df["volume"] / df["OI"].replace(0, 1)
     df["DTE"]            = (df["expiration"] - today).dt.days
     df["DIST_STRIKE"]    = (df["strike"] - underlying).abs() / underlying * 100
-    df["SPREAD"]         = df["ask"] - df["bid"]
     df["UNDER"]          = underlying
 
-    # --- FILTRI ---
+    # Spread: se bid e ask sono entrambi 0, usa NaN (dato non disponibile)
+    df["SPREAD"] = df.apply(
+        lambda r: (r["ask"] - r["bid"]) if (r["ask"] > 0 or r["bid"] > 0) else float("nan"),
+        axis=1
+    )
+
     df = df[df["volume"]           >= volume_min]
     df = df[df["VOI"]              >= voi_min]
     df = df[df["DTE"]              <= dte_max]
     df = df[df["DTE"]              >= 0]
     df = df[df["DIST_STRIKE"]      <= strike_distance]
     df = df[df["FLOW_POWER_NUM"]   >= flow_min]
-    df = df[df["SPREAD"]           <= spread_max]
+    # Applica filtro spread solo se il dato è disponibile
+    df = df[(df["SPREAD"].isna()) | (df["SPREAD"] <= spread_max)]
 
     if option_type != "BOTH":
         df = df[df["type"] == option_type]
