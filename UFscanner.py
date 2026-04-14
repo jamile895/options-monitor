@@ -92,7 +92,7 @@ preset = PRESETS[mode]
 st.caption(f"ℹ️ {preset['desc']}")
 
 # Reset sliders al cambio modalità
-APP_VERSION = "3.5"
+APP_VERSION = "3.6"
 if ("last_mode" not in st.session_state or
     st.session_state.get("last_mode") != mode or
     st.session_state.get("app_version") != APP_VERSION):
@@ -389,17 +389,14 @@ def parse_and_filter(raw: list[dict], underlying: float, ticker: str) -> pd.Data
     # FLOW POWER formattato
     df["FLOW $"] = df["FLOW_POWER_NUM"].apply(format_k)
 
-    # SIGNAL — basato su VOI (affidabile) + FLOW come conferma
+    # SIGNAL — basato su VOI come parametro primario affidabile
     def signal(row):
-        voi  = row["VOI"]
-        flow = row["FLOW_POWER_NUM"]
-        # GO: VOI alto E flow significativo
-        if voi >= 5.0 and flow >= 50_000:  return "🟢 GO"
-        if voi >= 5.0:                      return "🟢 GO"
-        # HOLD: VOI medio o flow medio
-        if voi >= 2.0 and flow >= 20_000:  return "🟡 HOLD"
-        if voi >= 2.0:                      return "🟡 HOLD"
-        if flow >= 50_000:                  return "🟡 HOLD"
+        try:
+            voi = float(row["VOI"])
+        except:
+            voi = 0
+        if voi >= 5.0:   return "🟢 GO"
+        if voi >= 2.0:   return "🟡 HOLD"
         return "🔴 STOP"
 
     df["SIG"] = df.apply(signal, axis=1)
