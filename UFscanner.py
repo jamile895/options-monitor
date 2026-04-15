@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import requests
 from datetime import datetime, timedelta
+from collections import defaultdict
 
 # =========================
 # SECRETS
@@ -15,7 +16,7 @@ POLYGON_API_KEY  = st.secrets["POLYGON_API_KEY"]
 # =========================
 st.set_page_config(layout="wide", page_title="Options Flow Scanner PRO")
 st.title("🔥 Options Flow Scanner PRO 🔥 by Ugo Fortezze")
-st.caption("Powered by Polygon.io — Greeks included")
+st.caption("Powered by Polygon.io — Greeks | Ask Hit | Sweep Detection")
 
 # =========================
 # MODALITÀ
@@ -40,6 +41,7 @@ PRESETS = {
         "spread_max": 20.0,
         "delta_min": 0.05,
         "delta_max": 0.95,
+        "ask_hit_min": 0.0,
         "desc": "Small Cap (<$2B) — bassa liquidità, filtri adattati"
     },
     "MID CAP": {
@@ -51,6 +53,7 @@ PRESETS = {
         "spread_max": 20.0,
         "delta_min": 0.10,
         "delta_max": 0.90,
+        "ask_hit_min": 0.0,
         "desc": "Mid Cap ($2B-$10B) — bilanciato tra liquidità e segnale"
     },
     "BIG CAP": {
@@ -62,6 +65,7 @@ PRESETS = {
         "spread_max": 20.0,
         "delta_min": 0.10,
         "delta_max": 0.90,
+        "ask_hit_min": 0.0,
         "desc": "Big Cap (>$10B) — alta liquidità, filtri standard"
     },
     "SNIPER": {
@@ -73,6 +77,7 @@ PRESETS = {
         "spread_max": 20.0,
         "delta_min": 0.20,
         "delta_max": 0.80,
+        "ask_hit_min": 55.0,
         "desc": "SNIPER — strike vicino, scadenza breve, alta pressione"
     },
     "HOT ONLY": {
@@ -84,6 +89,7 @@ PRESETS = {
         "spread_max": 20.0,
         "delta_min": 0.25,
         "delta_max": 0.75,
+        "ask_hit_min": 60.0,
         "desc": "HOT ONLY — solo flussi anomali estremi, scadenza imminente"
     },
 }
@@ -92,7 +98,7 @@ preset = PRESETS[mode]
 st.caption(f"ℹ️ {preset['desc']}")
 
 # Reset sliders al cambio modalità
-APP_VERSION = "3.6"
+APP_VERSION = "4.0"
 if ("last_mode" not in st.session_state or
     st.session_state.get("last_mode") != mode or
     st.session_state.get("app_version") != APP_VERSION):
@@ -106,21 +112,31 @@ if ("last_mode" not in st.session_state or
     st.session_state["spread_max"]    = float(preset["spread_max"])
     st.session_state["delta_min"]     = float(preset["delta_min"])
     st.session_state["delta_max"]     = float(preset["delta_max"])
+    st.session_state["ask_hit_min"]   = float(preset["ask_hit_min"])
 
 # =========================
 # SLIDERS
 # =========================
 col_s1, col_s2 = st.columns(2)
 with col_s1:
-    volume_min      = st.slider("Volume minimo (contratti)",  0,     50000,  st.session_state["volume_min"],             key="volume_min")
-    voi_min         = st.slider("VOI minimo (vol/OI)",        0.0,   20.0,   st.session_state["voi_min"],   step=0.1,    key="voi_min")
-    dte_min         = st.slider("DTE minimo (giorni)",        0,     30,     st.session_state["dte_min"],                key="dte_min")
-    dte_max         = st.slider("DTE massimo (giorni)",       1,     365,    st.session_state["dte_max"],                key="dte_max")
+    volume_min      = st.slider("Volume minimo (contratti)",  0,     50000,  st.session_state["volume_min"],              key="volume_min")
+    voi_min         = st.slider("VOI minimo (vol/OI)",        0.0,   20.0,   st.session_state["voi_min"],    step=0.1,    key="voi_min")
+    dte_min         = st.slider("DTE minimo (giorni)",        0,     30,     st.session_state["dte_min"],                 key="dte_min")
+    dte_max         = st.slider("DTE massimo (giorni)",       1,     365,    st.session_state["dte_max"],                 key="dte_max")
 with col_s2:
-    strike_distance = st.slider("Distanza strike %",          1,     50,     st.session_state["strike_dist"],            key="strike_dist")
-    spread_max      = st.slider("Spread bid/ask max ($)",     0.01,  20.0,   st.session_state["spread_max"], step=0.01,  key="spread_max")
-    delta_min       = st.slider("Delta minimo",               0.0,   1.0,    st.session_state["delta_min"],  step=0.01,  key="delta_min")
-    delta_max       = st.slider("Delta massimo",              0.0,   1.0,    st.session_state["delta_max"],  step=0.01,  key="delta_max")
+    strike_distance = st.slider("Distanza strike %",          1,     50,     st.session_state["strike_dist"],             key="strike_dist")
+    spread_max      = st.slider("Spread bid/ask max ($)",     0.01,  20.0,   st.session_state["spread_max"], step=0.01,   key="spread_max")
+    delta_min       = st.slider("Delta minimo",               0.0,   1.0,    st.session_state["delta_min"],  step=0.01,   key="delta_min")
+    delta_max       = st.slider("Delta massimo",              0.0,   1.0,    st.session_state["delta_max"],  step=0.01,   key="delta_max")
+
+ask_hit_min = st.slider(
+    "Ask Hit % minimo (0 = mostra tutto)",
+    0.0, 100.0,
+    st.session_state["ask_hit_min"],
+    step=5.0,
+    key="ask_hit_min",
+    help="Filtra contratti dove la pressione d'acquisto supera questa soglia. ≥55% = buyer aggressivo."
+)
 
 col1, col2 = st.columns(2)
 with col1:
@@ -155,11 +171,9 @@ def send_telegram_message(text):
 
 # =========================
 # POLYGON — PREZZO SOTTOSTANTE
-# Usa endpoint stocks snapshot per prezzo affidabile
 # =========================
 
 def get_stock_price(ticker: str) -> float | None:
-    # Metodo 1: snapshot stocks (più affidabile)
     try:
         url = f"https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers/{ticker}"
         r = requests.get(url, params={"apiKey": POLYGON_API_KEY}, timeout=8)
@@ -176,7 +190,6 @@ def get_stock_price(ticker: str) -> float | None:
     except Exception:
         pass
 
-    # Metodo 2: aggregati prev close
     try:
         url2 = f"https://api.polygon.io/v2/aggs/ticker/{ticker}/prev"
         r2 = requests.get(url2, params={"apiKey": POLYGON_API_KEY}, timeout=8)
@@ -187,7 +200,6 @@ def get_stock_price(ticker: str) -> float | None:
     except Exception:
         pass
 
-    # Metodo 3: snapshot opzioni — close del primo contratto
     try:
         url3 = f"https://api.polygon.io/v3/snapshot/options/{ticker}"
         r3 = requests.get(url3, params={"apiKey": POLYGON_API_KEY, "limit": 1}, timeout=8)
@@ -208,10 +220,10 @@ def get_stock_price(ticker: str) -> float | None:
 # POLYGON — CATENA OPZIONI
 # =========================
 
-def get_options_chain(ticker: str, dte_min: int, dte_max: int) -> list[dict]:
+def get_options_chain(ticker: str, dte_min_d: int, dte_max_d: int) -> list[dict]:
     today   = datetime.today().date()
-    exp_min = (today + timedelta(days=dte_min)).isoformat()
-    exp_max = (today + timedelta(days=dte_max)).isoformat()
+    exp_min = (today + timedelta(days=dte_min_d)).isoformat()
+    exp_max = (today + timedelta(days=dte_max_d)).isoformat()
     all_rows = []
     url = f"https://api.polygon.io/v3/snapshot/options/{ticker}"
 
@@ -246,6 +258,86 @@ def get_options_chain(ticker: str, dte_min: int, dte_max: int) -> list[dict]:
 
 
 # =========================
+# ASK HIT REALE — Polygon trades
+# Legge gli ultimi N trades del contratto e calcola la % eseguita at/near ask
+# =========================
+
+@st.cache_data(ttl=120, show_spinner=False)
+def get_ask_hit_real(contract_ticker: str, bid: float, ask: float) -> tuple[float | None, bool]:
+    """
+    Restituisce (ask_hit_pct, is_sweep).
+    ask_hit_pct: % trades eseguiti at/near ask (buyer aggressivo)
+    is_sweep: True se il contratto ha trades su ≥2 exchange diversi negli ultimi trades
+    """
+    if not contract_ticker:
+        return None, False
+
+    try:
+        url = f"https://api.polygon.io/v2/trades/{contract_ticker}"
+        params = {
+            "apiKey": POLYGON_API_KEY,
+            "limit":  50,        # ultimi 50 trades
+            "order": "desc",
+            "sort":  "timestamp",
+        }
+        r = requests.get(url, params=params, timeout=8)
+        if r.status_code != 200:
+            return None, False
+
+        trades = r.json().get("results", [])
+        if not trades:
+            return None, False
+
+        mid = (bid + ask) / 2 if (bid > 0 and ask > 0) else None
+
+        ask_hits   = 0
+        total_seen = 0
+        exchanges  = set()
+
+        for t in trades:
+            price      = t.get("price", 0)
+            exchange   = t.get("exchange")
+            conditions = t.get("conditions", [])
+
+            if exchange:
+                exchanges.add(exchange)
+
+            # Salta trades con condizioni speciali (opening, cancelled, etc.)
+            skip_conditions = {12, 13, 14, 15, 16, 17, 18, 41}
+            if any(c in skip_conditions for c in (conditions or [])):
+                continue
+
+            if price <= 0:
+                continue
+
+            total_seen += 1
+
+            # Classifica il trade
+            if mid is not None:
+                if price >= ask * 0.995:       # pagato ask o sopra → buyer aggressivo
+                    ask_hits += 1
+                elif price <= bid * 1.005:     # eseguito a bid o sotto → seller aggressivo
+                    pass
+                # tra bid e ask = mid, non conta
+            else:
+                # Senza bid/ask usa aggressor_side se disponibile
+                side = t.get("aggressor_side", "")
+                if side == "buyer":
+                    ask_hits += 1
+
+        if total_seen == 0:
+            return None, False
+
+        ask_hit_pct = round((ask_hits / total_seen) * 100, 1)
+        is_sweep    = len(exchanges) >= 2   # trade su ≥2 exchange = sweep istituzionale
+
+        return ask_hit_pct, is_sweep
+
+    except Exception:
+        return None, False
+
+
+# =========================
 # PARSE + FILTRI
 # =========================
 
@@ -277,7 +369,6 @@ def parse_and_filter(raw: list[dict], underlying: float, ticker: str) -> pd.Data
         bid    = quotes.get("bid") or 0
         ask    = quotes.get("ask") or 0
 
-        # Prezzo opzione: midpoint bid/ask è il più affidabile intraday
         if bid > 0 and ask > 0:
             mid = (bid + ask) / 2
         elif ask > 0:
@@ -293,40 +384,24 @@ def parse_and_filter(raw: list[dict], underlying: float, ticker: str) -> pd.Data
         theta = greeks.get("theta")
         vega  = greeks.get("vega")
 
-        # Spread in dollari
         spread = (ask - bid) if (ask > 0 and bid > 0) else None
 
-        # Ask Hitting % stimato da vwap e open/close
-        vwap      = day.get("vwap") or 0
-        day_open  = day.get("open") or 0
-        day_close = day.get("close") or 0
-
-        if vwap > 0 and mid > 0:
-            # Se MID > vwap = pressione acquisto (hitting ask)
-            ask_hit = round(min(100, max(0, ((mid - vwap) / vwap * 100 + 50))), 1)
-        elif day_open > 0 and day_close > 0:
-            # Fallback: confronto open/close
-            ask_hit = round(min(100, max(0, (day_close / day_open * 50))), 1)
-        else:
-            ask_hit = None
-
         rows.append({
-            "ticker_sym": ticker_sym,
-            "type":       contract_type,
-            "strike":     strike,
-            "expiration": exp_dt,
-            "volume":     int(volume),
-            "OI":         int(oi),
-            "MID":        round(mid, 2),
-            "bid":        round(bid, 2),
-            "ask":        round(ask, 2),
-            "SPREAD":     round(spread, 2) if spread is not None else None,
-            "IV":         round(iv * 100, 1) if iv else None,
-            "delta":      round(abs(delta), 3) if delta is not None else None,
-            "gamma":      round(gamma, 4) if gamma is not None else None,
-            "theta":      round(theta, 3) if theta is not None else None,
-            "vega":       round(vega, 3) if vega is not None else None,
-            "ASK_HIT":    ask_hit,
+            "ticker_sym":  ticker_sym,
+            "type":        contract_type,
+            "strike":      strike,
+            "expiration":  exp_dt,
+            "volume":      int(volume),
+            "OI":          int(oi),
+            "MID":         round(mid, 2),
+            "bid":         round(bid, 2),
+            "ask":         round(ask, 2),
+            "SPREAD":      round(spread, 2) if spread is not None else None,
+            "IV":          round(iv * 100, 1) if iv else None,
+            "delta":       round(abs(delta), 3) if delta is not None else None,
+            "gamma":       round(gamma, 4)      if gamma is not None else None,
+            "theta":       round(theta, 3)      if theta is not None else None,
+            "vega":        round(vega, 3)       if vega is not None else None,
         })
 
     if not rows:
@@ -336,7 +411,6 @@ def parse_and_filter(raw: list[dict], underlying: float, ticker: str) -> pd.Data
 
     # METRICHE
     df["VOI"]            = (df["volume"] / df["OI"].replace(0, 1)).round(2)
-    df["ASK_HIT"]        = df["ASK_HIT"].round(0) if "ASK_HIT" in df.columns else df.get("ASK_HIT")
     df["DTE"]            = (df["expiration"] - today).dt.days
     df["DIST_STRIKE"]    = ((df["strike"] - underlying).abs() / underlying * 100).round(1)
     df["UNDER"]          = underlying
@@ -349,24 +423,21 @@ def parse_and_filter(raw: list[dict], underlying: float, ticker: str) -> pd.Data
     df = df[df["DTE"]           <= dte_max]
     df = df[df["DIST_STRIKE"]   <= strike_distance]
 
-    # FILTRO SPREAD — solo se dato disponibile
     if spread_max < 20.0:
         df = df[(df["SPREAD"].isna()) | (df["SPREAD"] <= spread_max)]
 
-    # FILTRO DELTA — solo se greche disponibili
     df = df[
         df["delta"].isna() |
         ((df["delta"] >= delta_min) & (df["delta"] <= delta_max))
     ]
 
-    # PUT/CALL RATIO — calcolato PRIMA del filtro tipo opzione
+    # PUT/CALL RATIO — prima del filtro tipo
     calls_all = df[df["type"] == "CALL"]["volume"].sum()
     puts_all  = df[df["type"] == "PUT"]["volume"].sum()
-    df.attrs["pc_ratio"]   = round(puts_all / calls_all, 2) if calls_all > 0 else 0
-    df.attrs["calls_vol"]  = int(calls_all)
-    df.attrs["puts_vol"]   = int(puts_all)
+    df.attrs["pc_ratio"]  = round(puts_all / calls_all, 2) if calls_all > 0 else 0
+    df.attrs["calls_vol"] = int(calls_all)
+    df.attrs["puts_vol"]  = int(puts_all)
 
-    # FILTRO TIPO OPZIONE
     if option_type != "BOTH":
         df = df[df["type"] == option_type]
 
@@ -383,26 +454,21 @@ def parse_and_filter(raw: list[dict], underlying: float, ticker: str) -> pd.Data
         df["type"].str[0]
     )
 
-    # CLUSTER — volume totale per strike
     df["CLUSTER"] = df.groupby("strike")["volume"].transform("sum").apply(format_k)
+    df["FLOW $"]  = df["FLOW_POWER_NUM"].apply(format_k)
 
-    # FLOW POWER formattato
-    df["FLOW $"] = df["FLOW_POWER_NUM"].apply(format_k)
-
-    # SIGNAL — basato su VOI come parametro primario affidabile
     def signal(row):
         try:
             voi = float(row["VOI"])
         except:
             voi = 0
-        if voi >= 5.0:   return "🟢 GO"
-        if voi >= 2.0:   return "🟡 HOLD"
+        if voi >= 5.0: return "🟢 GO"
+        if voi >= 2.0: return "🟡 HOLD"
         return "🔴 STOP"
 
-    df["SIG"] = df.apply(signal, axis=1)
+    df["SIG"]  = df.apply(signal, axis=1)
     df["BIAS"] = df["type"].apply(lambda x: "📈 L" if x == "CALL" else "📉 S")
 
-    # ITM / ATM / OTM
     df["ITM"] = df.apply(
         lambda r: "✅" if (r["type"] == "CALL" and r["strike"] < underlying)
                        or (r["type"] == "PUT"  and r["strike"] > underlying) else "", axis=1)
@@ -412,6 +478,42 @@ def parse_and_filter(raw: list[dict], underlying: float, ticker: str) -> pd.Data
                        or (r["type"] == "PUT"  and r["strike"] < underlying) else "", axis=1)
 
     return df.sort_values("FLOW_POWER_NUM", ascending=False)
+
+
+# =========================
+# ARRICCHIMENTO ASK HIT + SWEEP (solo top N per non fare troppe chiamate API)
+# =========================
+
+def enrich_with_flow_data(df: pd.DataFrame, top_n: int = 15) -> pd.DataFrame:
+    """
+    Chiama Polygon trades per i top_n contratti per volume.
+    Aggiunge colonne ASK_HIT (%) e SWEEP (🌊 o "").
+    """
+    df = df.copy()
+    df["ASK_HIT"] = None
+    df["SWEEP"]   = ""
+
+    # Lavoriamo solo sulle prime top_n righe (già ordinate per FLOW_POWER_NUM)
+    idx_list = df.head(top_n).index.tolist()
+
+    progress = st.progress(0, text="📡 Analisi flusso in corso...")
+    total = len(idx_list)
+
+    for i, idx in enumerate(idx_list):
+        row           = df.loc[idx]
+        contract_sym  = row.get("ticker_sym", "")
+        bid           = row.get("bid", 0)
+        ask           = row.get("ask", 0)
+
+        if contract_sym:
+            ask_hit_pct, is_sweep = get_ask_hit_real(contract_sym, bid, ask)
+            df.at[idx, "ASK_HIT"] = ask_hit_pct
+            df.at[idx, "SWEEP"]   = "🌊" if is_sweep else ""
+
+        progress.progress((i + 1) / total, text=f"📡 Flow analysis: {i+1}/{total}")
+
+    progress.empty()
+    return df
 
 
 # =========================
@@ -436,15 +538,44 @@ def scan_ticker(ticker: str) -> pd.DataFrame:
 
     df = parse_and_filter(raw, underlying, ticker)
 
-    if not df.empty:
-        pc = df.attrs.get("pc_ratio", 0)
-        cv = df.attrs.get("calls_vol", 0)
-        pv = df.attrs.get("puts_vol", 0)
-        bias = "📈 BULLISH" if pc < 0.8 else ("📉 BEARISH" if pc > 1.2 else "⚖️ NEUTRO")
-        st.caption(f"Put/Call Ratio: **{pc}** | CALL vol: {cv:,} | PUT vol: {pv:,} | Bias: {bias}")
+    if df.empty:
+        return df
+
+    # Mostra P/C ratio
+    pc = df.attrs.get("pc_ratio", 0)
+    cv = df.attrs.get("calls_vol", 0)
+    pv = df.attrs.get("puts_vol", 0)
+    bias = "📈 BULLISH" if pc < 0.8 else ("📉 BEARISH" if pc > 1.2 else "⚖️ NEUTRO")
+    st.caption(f"Put/Call Ratio: **{pc}** | CALL vol: {cv:,} | PUT vol: {pv:,} | Bias: {bias}")
+
+    # Arricchisci con Ask Hit reale e Sweep
+    df = enrich_with_flow_data(df, top_n=15)
+
+    # Filtro Ask Hit minimo (solo sulle righe che hanno il dato)
+    if ask_hit_min > 0:
+        df = df[df["ASK_HIT"].isna() | (df["ASK_HIT"] >= ask_hit_min)]
 
     return df
 
+
+# =========================
+# LEGENDA
+# =========================
+with st.expander("📖 Legenda colonne nuove"):
+    st.markdown("""
+| Colonna | Significato |
+|---|---|
+| **ASK_HIT %** | % dei trades eseguiti at/near ask. ≥70% 🟢 buyer aggressivo, ≤30% 🔴 seller aggressivo, 30-70% 🟡 neutro |
+| **SWEEP** | 🌊 = contratto tradato su ≥2 exchange simultaneamente → segnale di intenzionalità istituzionale |
+
+**Come leggere ASK_HIT:**
+- **≥70%** → i buyer stanno pagando il prezzo ask → **pressione rialzista reale**
+- **≤30%** → i seller abbassano al bid → **pressione ribassista o liquidazione**
+- **30–70%** → flusso misto / neutro
+
+**Come leggere SWEEP:**
+- Un sweep su più exchange significa che qualcuno ha comprato/venduto su tutti i market maker contemporaneamente per riempire un ordine grande velocemente → **segnale istituzionale forte**
+""")
 
 # =========================
 # SCAN BUTTON
@@ -480,11 +611,20 @@ if st.button("🚀 Scansiona mercato", type="primary", use_container_width=True)
                         f"Δ {row['delta']}  Γ {row['gamma']}  "
                         f"Θ {row['theta']}  V {row['vega']}\n"
                     )
+                ask_hit_val = row.get("ASK_HIT")
+                sweep_val   = row.get("SWEEP", "")
+                flow_line   = f"Flow: <b>{row['FLOW $']}</b>  |  VOI: {row['VOI']}  |  Vol: {row['volume']}\n"
+                hit_line    = ""
+                if ask_hit_val is not None:
+                    hit_emoji = "🟢" if ask_hit_val >= 70 else ("🔴" if ask_hit_val <= 30 else "🟡")
+                    hit_line  = f"Ask Hit: {hit_emoji} <b>{ask_hit_val:.0f}%</b>  {sweep_val}\n"
+
                 telegram_text += (
                     f"{row['SIG']}  {row['BIAS']}\n"
                     f"<b>{row['OPZIONE']}</b>\n"
                     f"Underlying: ${row['UNDER']}  |  Mid: ${row['MID']}\n"
-                    f"Flow: <b>{row['FLOW $']}</b>  |  VOI: {row['VOI']}  |  Vol: {row['volume']}\n"
+                    f"{flow_line}"
+                    f"{hit_line}"
                     f"{greeks_line}\n"
                 )
 
@@ -493,7 +633,7 @@ if st.button("🚀 Scansiona mercato", type="primary", use_container_width=True)
         st.success(f"✅ Trovate {len(final_df)} opportunità totali")
 
         display_cols = [
-            "SIG", "FLOW $", "CLUSTER", "BIAS", "OPZIONE",
+            "SIG", "FLOW $", "CLUSTER", "BIAS", "SWEEP", "OPZIONE",
             "UNDER", "MID", "bid", "ask", "SPREAD",
             "volume", "OI", "VOI", "DTE", "IV",
             "ASK_HIT",
@@ -511,31 +651,37 @@ if st.button("🚀 Scansiona mercato", type="primary", use_container_width=True)
         def highlight_ask_hit(val):
             try:
                 v = float(val)
-                if v >= 70: return "background-color:#1a3a1a; color:#00ff88"  # verde = acquisto
-                if v <= 30: return "background-color:#3a0a0a; color:#ff4444"  # rosso = vendita
-                return "background-color:#3a3a0a; color:#ffdd00"              # giallo = neutro
+                if v >= 70: return "background-color:#1a3a1a; color:#00ff88"
+                if v <= 30: return "background-color:#3a0a0a; color:#ff4444"
+                return "background-color:#3a3a0a; color:#ffdd00"
             except:
                 return ""
+
+        def highlight_sweep(val):
+            if val == "🌊":
+                return "background-color:#1a1a3a; color:#88aaff"
+            return ""
 
         styled = (
             final_df[display_cols]
             .reset_index(drop=True)
             .style
-            .map(highlight_sig, subset=["SIG"])
-            .map(highlight_ask_hit, subset=["ASK_HIT"] if "ASK_HIT" in final_df.columns else [])
+            .map(highlight_sig,      subset=["SIG"])
+            .map(highlight_ask_hit,  subset=["ASK_HIT"] if "ASK_HIT" in final_df.columns else [])
+            .map(highlight_sweep,    subset=["SWEEP"]   if "SWEEP"   in final_df.columns else [])
             .format({
-                "UNDER":   lambda x: f"${x:.2f}"       if pd.notna(x) else "—",
-                "MID":     lambda x: f"${x:.2f}"       if pd.notna(x) else "—",
-                "bid":     lambda x: f"${x:.2f}"       if pd.notna(x) else "—",
-                "ask":     lambda x: f"${x:.2f}"       if pd.notna(x) else "—",
-                "SPREAD":  lambda x: f"${x:.2f}"       if pd.notna(x) else "—",
-                "VOI":     lambda x: f"{float(x):.2f}" if pd.notna(x) else "—",
+                "UNDER":   lambda x: f"${x:.2f}"        if pd.notna(x) else "—",
+                "MID":     lambda x: f"${x:.2f}"        if pd.notna(x) else "—",
+                "bid":     lambda x: f"${x:.2f}"        if pd.notna(x) else "—",
+                "ask":     lambda x: f"${x:.2f}"        if pd.notna(x) else "—",
+                "SPREAD":  lambda x: f"${x:.2f}"        if pd.notna(x) else "—",
+                "VOI":     lambda x: f"{float(x):.2f}"  if pd.notna(x) else "—",
                 "ASK_HIT": lambda x: f"{float(x):.0f}%" if pd.notna(x) else "—",
-                "IV":      lambda x: f"{x:.1f}%"       if pd.notna(x) else "—",
-                "delta":   lambda x: f"{x:.3f}"        if pd.notna(x) else "—",
-                "gamma":   lambda x: f"{x:.4f}"        if pd.notna(x) else "—",
-                "theta":   lambda x: f"{x:.3f}"        if pd.notna(x) else "—",
-                "vega":    lambda x: f"{x:.3f}"        if pd.notna(x) else "—",
+                "IV":      lambda x: f"{x:.1f}%"        if pd.notna(x) else "—",
+                "delta":   lambda x: f"{x:.3f}"         if pd.notna(x) else "—",
+                "gamma":   lambda x: f"{x:.4f}"         if pd.notna(x) else "—",
+                "theta":   lambda x: f"{x:.3f}"         if pd.notna(x) else "—",
+                "vega":    lambda x: f"{x:.3f}"         if pd.notna(x) else "—",
             }, na_rep="—")
         )
 
