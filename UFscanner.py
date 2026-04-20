@@ -459,7 +459,7 @@ PRESETS = {
 preset = PRESETS[mode]
 st.caption(f"ℹ️ {preset['desc']}")
 
-APP_VERSION = "4.9"
+APP_VERSION = "4.9.1"
 if ("last_mode" not in st.session_state or
     st.session_state.get("last_mode") != mode or
     st.session_state.get("app_version") != APP_VERSION):
@@ -730,6 +730,14 @@ def parse_and_filter(raw: list[dict], underlying: float, ticker: str) -> pd.Data
 
     df["SIG"]  = df.apply(signal, axis=1)
     df["BIAS"] = df["type"].apply(lambda x: "📈 L" if x == "CALL" else "📉 S")
+
+    # Earnings flag per ogni contratto
+    def check_earnings(row):
+        has_earn, earn_date = earnings_in_dte(ticker, int(row["DTE"]))
+        if has_earn: return f"⚠️ {earn_date}"
+        return ""
+    df["EARN"] = df.apply(check_earnings, axis=1)
+
     df["ITM"]  = df.apply(lambda r: "✅" if (r["type"]=="CALL" and r["strike"]<underlying)
                                          or (r["type"]=="PUT"  and r["strike"]>underlying) else "", axis=1)
     df["ATM"]  = df["DIST_STRIKE"].apply(lambda x: "🎯" if x <= 1.0 else "")
@@ -815,6 +823,12 @@ def scan_ticker(ticker: str) -> pd.DataFrame:
         return pd.DataFrame()
 
     st.caption(f"📌 {ticker} — prezzo sottostante: **${underlying}**")
+    has_earn, earn_date = earnings_in_dte(ticker, dte_max)
+    if has_earn:
+        days_to = (datetime.strptime(earn_date, "%Y-%m-%d").date() - datetime.today().date()).days
+        st.warning(f"⚠️ **EARNINGS ALERT** — {ticker} ha earnings il **{earn_date}** ({days_to} giorni). "
+                   f"Le opzioni con scadenza dopo questa data sono più care (IV elevata). "
+                   f"Valuta se il segnale è da earnings o da flusso reale.")
     with st.spinner(f"📡 Scaricando opzioni {ticker}..."):
         raw = get_options_chain(ticker, dte_min, dte_max)
     if not raw:
@@ -835,7 +849,7 @@ def scan_ticker(ticker: str) -> pd.DataFrame:
 # =========================
 # LEGENDA / MANUALE IN-APP
 # =========================
-with st.expander("📖 Manuale — Options Flow Scanner PRO v4.9"):
+with st.expander("📖 Manuale — Options Flow Scanner PRO v4.9.1"):
     st.markdown("""
 ## 🎯 Obiettivo del Tool
 Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volumi anomali rispetto all'open interest, con focus su **smart money** e **accumulo balena**. Nessuna esecuzione automatica — il controllo finale è sempre tuo.
@@ -1331,5 +1345,5 @@ st.divider()
 st.caption(
     "⚠️ Questo tool è uno screener di primo livello. "
     "L'analisi finale (grafico, contesto macro, greche) va completata su IBKR. "
-    "Nessun ordine viene eseguito automaticamente. — v4.9"
+    "Nessun ordine viene eseguito automaticamente. — v4.9.1"
 )
