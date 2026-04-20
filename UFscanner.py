@@ -181,6 +181,43 @@ def get_cluster_repeat(ticker, strike, expiration, contract_type, history=None) 
             days.add(str(e.get("date","")))
     return len(days)
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_next_earnings(ticker: str) -> str | None:
+    try:
+        url = f"https://api.polygon.io/vX/reference/tickers/{ticker}"
+        r = requests.get(url, params={"apiKey": POLYGON_API_KEY}, timeout=8)
+        if r.status_code == 200:
+            data = r.json().get("results", {})
+            earnings = data.get("next_earnings_date") or data.get("earnings_date")
+            if earnings: return str(earnings)
+    except Exception: pass
+    try:
+        url2 = f"https://api.polygon.io/vX/reference/financials"
+        r2 = requests.get(url2, params={"apiKey": POLYGON_API_KEY, "ticker": ticker,
+            "timeframe": "quarterly", "limit": 1, "order": "desc"}, timeout=8)
+        if r2.status_code == 200:
+            results = r2.json().get("results", [])
+            if results:
+                last_period = results[0].get("end_date","")
+                if last_period:
+                    last_dt = datetime.strptime(last_period, "%Y-%m-%d")
+                    next_dt = last_dt + timedelta(days=91)
+                    return next_dt.strftime("%Y-%m-%d")
+    except Exception: pass
+    return None
+
+def earnings_in_dte(ticker: str, dte_max_days: int) -> tuple[bool, str]:
+    earnings_date = get_next_earnings(ticker)
+    if not earnings_date: return False, ""
+    try:
+        today = datetime.today().date()
+        ed = datetime.strptime(earnings_date, "%Y-%m-%d").date()
+        days_to_earnings = (ed - today).days
+        if 0 <= days_to_earnings <= dte_max_days:
+            return True, earnings_date
+    except Exception: pass
+    return False, ""
+
 def compute_score(voi, ask_hit, sweep, whale_days, flow_num, has_earn, iv=None):
     score = 0
     try:
@@ -459,7 +496,7 @@ PRESETS = {
 preset = PRESETS[mode]
 st.caption(f"ℹ️ {preset['desc']}")
 
-APP_VERSION = "4.9.1"
+APP_VERSION = "4.9.2"
 if ("last_mode" not in st.session_state or
     st.session_state.get("last_mode") != mode or
     st.session_state.get("app_version") != APP_VERSION):
@@ -849,7 +886,7 @@ def scan_ticker(ticker: str) -> pd.DataFrame:
 # =========================
 # LEGENDA / MANUALE IN-APP
 # =========================
-with st.expander("📖 Manuale — Options Flow Scanner PRO v4.9.1"):
+with st.expander("📖 Manuale — Options Flow Scanner PRO v4.9.2"):
     st.markdown("""
 ## 🎯 Obiettivo del Tool
 Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volumi anomali rispetto all'open interest, con focus su **smart money** e **accumulo balena**. Nessuna esecuzione automatica — il controllo finale è sempre tuo.
@@ -1345,5 +1382,5 @@ st.divider()
 st.caption(
     "⚠️ Questo tool è uno screener di primo livello. "
     "L'analisi finale (grafico, contesto macro, greche) va completata su IBKR. "
-    "Nessun ordine viene eseguito automaticamente. — v4.9.1"
+    "Nessun ordine viene eseguito automaticamente. — v4.9.2"
 )
