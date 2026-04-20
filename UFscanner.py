@@ -308,69 +308,79 @@ def load_watchlist_history(ticker=None, strike=None, expiration=None, contract_t
     return rows
 
 # =========================
-# EARNINGS ALERT — v4.7
+# SCORE COMPOSITO — v4.8
+# Punteggio 0-100 che combina tutti i segnali in un unico numero
 # =========================
 
-@st.cache_data(ttl=3600, show_spinner=False)  # Cache 1 ora
-def get_next_earnings(ticker: str) -> str | None:
+def compute_score(voi: float, ask_hit, sweep: str, whale_days: int,
+                  flow_num: float, has_earn: bool, iv: float = None) -> int:
     """
-    Recupera la prossima data di earnings da Polygon.
-    Ritorna la data come stringa YYYY-MM-DD o None se non disponibile.
+    Score 0-100:
+    - VOI         → max 30 punti  (segnale principale)
+    - Flow $      → max 20 punti  (dimensione istituzionale)
+    - ASK_HIT     → max 20 punti  (aggressività buyer)
+    - 🐋 DAYS     → max 15 punti  (accumulo nel tempo)
+    - SWEEP       → max 10 punti  (intenzionalità istituzionale)
+    - Earnings    → -15 punti     (penalità: segnale potenzialmente distorto)
     """
-    try:
-        url = f"https://api.polygon.io/vX/reference/tickers/{ticker}"
-        r = requests.get(url, params={"apiKey": POLYGON_API_KEY}, timeout=8)
-        if r.status_code == 200:
-            data = r.json().get("results", {})
-            # Polygon fornisce next_earnings_date nel campo metadata
-            earnings = data.get("next_earnings_date") or data.get("earnings_date")
-            if earnings:
-                return str(earnings)
-    except Exception:
-        pass
+    score = 0
 
-    # Fallback: cerca nei financial results
+    # VOI — 30 punti max
     try:
-        url2 = f"https://api.polygon.io/vX/reference/financials"
-        r2 = requests.get(url2, params={
-            "apiKey": POLYGON_API_KEY,
-            "ticker": ticker,
-            "timeframe": "quarterly",
-            "limit": 1,
-            "order": "desc"
-        }, timeout=8)
-        if r2.status_code == 200:
-            results = r2.json().get("results", [])
-            if results:
-                # Prossimo earnings stimato ~ 3 mesi dopo l'ultimo
-                from datetime import datetime, timedelta
-                last_period = results[0].get("end_date","")
-                if last_period:
-                    last_dt = datetime.strptime(last_period, "%Y-%m-%d")
-                    next_dt = last_dt + timedelta(days=91)
-                    return next_dt.strftime("%Y-%m-%d")
-    except Exception:
-        pass
-    return None
+        v = float(voi)
+        if   v >= 10: score += 30
+        elif v >= 5:  score += 22
+        elif v >= 3:  score += 15
+        elif v >= 2:  score += 10
+        elif v >= 1:  score += 5
+    except: pass
 
-def earnings_in_dte(ticker: str, dte_max_days: int) -> tuple[bool, str]:
-    """
-    Controlla se ci sono earnings entro il DTE massimo.
-    Ritorna (True, data) se sì, (False, "") altrimenti.
-    """
-    earnings_date = get_next_earnings(ticker)
-    if not earnings_date:
-        return False, ""
+    # Flow $ — 20 punti max
     try:
-        from datetime import datetime
-        today = datetime.today().date()
-        ed = datetime.strptime(earnings_date, "%Y-%m-%d").date()
-        days_to_earnings = (ed - today).days
-        if 0 <= days_to_earnings <= dte_max_days:
-            return True, earnings_date
-    except Exception:
-        pass
-    return False, ""
+        f = float(flow_num)
+        if   f >= 1_000_000: score += 20
+        elif f >= 500_000:   score += 15
+        elif f >= 200_000:   score += 10
+        elif f >= 100_000:   score += 5
+        elif f >= 50_000:    score += 2
+    except: pass
+
+    # ASK_HIT — 20 punti max
+    try:
+        if ask_hit is not None:
+            ah = float(ask_hit)
+            if   ah >= 80: score += 20
+            elif ah >= 70: score += 15
+            elif ah >= 60: score += 10
+            elif ah >= 50: score += 5
+            elif ah <= 30: score -= 5   # seller aggressivo = penalità
+    except: pass
+
+    # 🐋 DAYS — 15 punti max
+    try:
+        d = int(whale_days)
+        if   d >= 5: score += 15
+        elif d >= 3: score += 10
+        elif d >= 2: score += 6
+        elif d >= 1: score += 2
+    except: pass
+
+    # SWEEP — 10 punti
+    if sweep == "🌊":
+        score += 10
+
+    # EARNINGS — penalità -15
+    if has_earn:
+        score -= 15
+
+    return max(0, min(100, score))
+
+def score_label(score: int) -> str:
+    """Converte score numerico in label con emoji."""
+    if score >= 75: return f"🔥 {score}"
+    if score >= 50: return f"⚡ {score}"
+    if score >= 30: return f"👀 {score}"
+    return f"💤 {score}"
 
 # =========================
 # MODALITÀ
@@ -427,7 +437,7 @@ PRESETS = {
 preset = PRESETS[mode]
 st.caption(f"ℹ️ {preset['desc']}")
 
-APP_VERSION = "4.7"
+APP_VERSION = "4.8"
 if ("last_mode" not in st.session_state or
     st.session_state.get("last_mode") != mode or
     st.session_state.get("app_version") != APP_VERSION):
@@ -698,14 +708,6 @@ def parse_and_filter(raw: list[dict], underlying: float, ticker: str) -> pd.Data
 
     df["SIG"]  = df.apply(signal, axis=1)
     df["BIAS"] = df["type"].apply(lambda x: "📈 L" if x == "CALL" else "📉 S")
-
-    # v4.7 — Earnings flag: controlla se earnings cade entro il DTE del contratto
-    def check_earnings(row):
-        has_earn, earn_date = earnings_in_dte(ticker, int(row["DTE"]))
-        if has_earn:
-            return f"⚠️ {earn_date}"
-        return ""
-    df["EARN"] = df.apply(check_earnings, axis=1)
     df["ITM"]  = df.apply(lambda r: "✅" if (r["type"]=="CALL" and r["strike"]<underlying)
                                          or (r["type"]=="PUT"  and r["strike"]>underlying) else "", axis=1)
     df["ATM"]  = df["DIST_STRIKE"].apply(lambda x: "🎯" if x <= 1.0 else "")
@@ -722,6 +724,7 @@ def enrich_with_flow_data(df: pd.DataFrame, ticker: str, top_n: int = 15) -> pd.
     df["ASK_HIT"] = None
     df["SWEEP"]   = ""
     df["🐋 DAYS"] = 0
+    df["SCORE"]   = 0
 
     # Carica storico UNA SOLA VOLTA — evita chiamate ripetute a Google Sheets
     cached_history = load_history()
@@ -743,10 +746,24 @@ def enrich_with_flow_data(df: pd.DataFrame, ticker: str, top_n: int = 15) -> pd.
                        row.get("VOI",0), ask_hit_pct, sweep_str)
 
         # Passa lo storico cached — nessuna chiamata extra a GSheets
-        df.at[idx, "🐋 DAYS"] = get_cluster_repeat(
+        whale_days = get_cluster_repeat(
             ticker, row.get("strike"), row.get("exp_str",""), row.get("type",""),
             history=cached_history
         )
+        df.at[idx, "🐋 DAYS"] = whale_days
+
+        # v4.8 — Score composito
+        has_earn_flag = bool(row.get("EARN",""))
+        score = compute_score(
+            voi=row.get("VOI", 0),
+            ask_hit=ask_hit_pct,
+            sweep=sweep_str,
+            whale_days=whale_days,
+            flow_num=row.get("FLOW_POWER_NUM", 0),
+            has_earn=has_earn_flag,
+            iv=row.get("IV")
+        )
+        df.at[idx, "SCORE"] = score_label(score)
         progress.progress((i+1)/len(idx_list), text=f"📡 Flow analysis: {i+1}/{len(idx_list)}")
 
     progress.empty()
@@ -769,14 +786,6 @@ def scan_ticker(ticker: str) -> pd.DataFrame:
         return pd.DataFrame()
 
     st.caption(f"📌 {ticker} — prezzo sottostante: **${underlying}**")
-
-    # v4.7 — Earnings warning banner
-    has_earn, earn_date = earnings_in_dte(ticker, dte_max)
-    if has_earn:
-        days_to = (datetime.strptime(earn_date, "%Y-%m-%d").date() - datetime.today().date()).days
-        st.warning(f"⚠️ **EARNINGS ALERT** — {ticker} ha earnings il **{earn_date}** ({days_to} giorni). "
-                   f"Le opzioni con scadenza dopo questa data sono più care (IV elevata). "
-                   f"Valuta se il segnale è da earnings o da flusso reale.")
     with st.spinner(f"📡 Scaricando opzioni {ticker}..."):
         raw = get_options_chain(ticker, dte_min, dte_max)
     if not raw:
@@ -797,7 +806,7 @@ def scan_ticker(ticker: str) -> pd.DataFrame:
 # =========================
 # LEGENDA / MANUALE IN-APP
 # =========================
-with st.expander("📖 Manuale — Options Flow Scanner PRO v4.7"):
+with st.expander("📖 Manuale — Options Flow Scanner PRO v4.8"):
     st.markdown("""
 ## 🎯 Obiettivo del Tool
 Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volumi anomali rispetto all'open interest, con focus su **smart money** e **accumulo balena**. Nessuna esecuzione automatica — il controllo finale è sempre tuo.
@@ -821,6 +830,7 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
 
 | Colonna | Formula | Come leggerla |
 |---|---|---|
+| **SCORE** | Punteggio composito 0-100 | 🔥≥75 eccezionale · ⚡≥50 forte · 👀≥30 discreto · 💤 debole |
 | **SIG** | VOI ≥5→GO, ≥2→HOLD, <2→STOP | 🟢 GO = flusso anomalo forte · 🟡 HOLD = interessante · 🔴 STOP = rumore |
 | **FLOW $** | Volume × MID price | Notional totale. >$500K = istituzionale. >$1M = whale |
 | **CLUSTER** | Volume totale per strike | Concentrazione su uno strike specifico |
@@ -835,7 +845,6 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
 | **gamma** | Variazione delta per $1 | Alto gamma + DTE breve = posizione esplosiva vicino scadenza |
 | **theta** | Decadimento temporale giornaliero | Negativo per chi compra. Con DTE 60+ è gestibile |
 | **vega** | Sensitività alla volatilità | Alto vega = beneficia da spike di volatilità (es. eventi macro) |
-| **EARN** | Earnings nel DTE | ⚠️ data = earnings entro la scadenza — valuta se il segnale è da earnings |
 | **ITM** | Strike favorevole vs prezzo | ✅ = In The Money |
 | **ATM** | Strike ≤1% dal prezzo | 🎯 = At The Money |
 | **OTM** | Strike sfavorevole vs prezzo | ⬆️ = Out of The Money |
@@ -885,11 +894,46 @@ La colonna **🐋 DAYS** conta quante volte lo stesso contratto (ticker + strike
 
 ---
 
+## 🎯 Score Composito (v4.8)
+
+Lo **SCORE** è un punteggio da 0 a 100 che combina tutti i segnali in un unico numero leggibile a colpo d'occhio:
+
+| Score | Label | Significato |
+|---|---|---|
+| **75–100** | 🔥 | Segnale eccezionale — tutti i fattori allineati |
+| **50–74** | ⚡ | Segnale forte — vale un'analisi approfondita su IBKR |
+| **30–49** | 👀 | Segnale discreto — tieni d'occhio nei prossimi giorni |
+| **0–29** | 💤 | Segnale debole — rumore di fondo |
+
+**Composizione del punteggio:**
+- VOI → fino a 30 punti
+- Flow $ → fino a 20 punti
+- ASK_HIT → fino a 20 punti
+- 🐋 DAYS → fino a 15 punti
+- SWEEP 🌊 → 10 punti
+- Earnings ⚠️ → **-15 punti** (penalità)
+
+---
+
+## ⚠️ Regola Operativa — Earnings Alert
+
+Quando vedi **EARN ⚠️** su un contratto, applicare questa regola:
+
+| Situazione | Interpretazione | Azione |
+|---|---|---|
+| **EARN vuoto + SCORE alto** | Flusso reale da smart money | ✅ Segnale affidabile, analizza su IBKR |
+| **EARN ⚠️ + SCORE alto** | Potrebbe essere speculazione pre-earnings | ⚠️ Analizza con cautela — è un bet sugli earnings? |
+| **EARN ⚠️ + VOI molto alto** | Qualcuno scommette sul risultato degli earnings | ⚠️ Rischio elevato — IV si sgonfierà dopo l'evento |
+
+**Regola d'oro:** se il segnale ha earnings nel DTE, la IV è artificialmente gonfiata. Il prezzo dell'opzione scende anche se il titolo va nella direzione giusta (IV crush). Considera solo se hai una forte view direzionale sull'earnings.
+
+---
+
 ## ⚠️ Note Operative
 
 - Questo tool è uno **screener di primo livello**. L'analisi finale va completata su IBKR (grafico, contesto macro, greche).
 - Il flusso di opzioni anticipa spesso il movimento del sottostante di 1–5 giorni, ma non è infallibile.
-- La combinazione più forte: **VOI alto + ASK_HIT ≥55% + SWEEP 🌊 + 🐋 DAYS ≥2**
+- La combinazione più forte: **SCORE 🔥 + VOI alto + ASK_HIT ≥55% + SWEEP 🌊 + 🐋 DAYS ≥2 + EARN vuoto**
 - Paper trading consigliato per le prime settimane: 1–2 operazioni al giorno con note su entry, razionale e risultato.
 - Nessun ordine viene eseguito automaticamente. Il controllo finale è sempre tuo.
 """)
@@ -1091,14 +1135,12 @@ if st.button("🚀 Scansiona mercato", type="primary", use_container_width=True)
                     hit_line  = f"Ask Hit: {hit_emoji} <b>{ask_hit_val:.0f}%</b>  {sweep_val}\n"
                 if whale_days >= 2:
                     whale_line = f"🐋 Accumulo: <b>{whale_days} giorni</b>\n"
-                earn_val  = row.get("EARN","")
-                earn_line = f"⚠️ Earnings: <b>{earn_val}</b>\n" if earn_val else ""
                 telegram_text += (
                     f"{row['SIG']}  {row['BIAS']}\n"
                     f"<b>{row['OPZIONE']}</b>\n"
                     f"Underlying: ${row['UNDER']}  |  Mid: ${row['MID']}\n"
                     f"Flow: <b>{row['FLOW $']}</b>  |  VOI: {row['VOI']}\n"
-                    f"{hit_line}{whale_line}{earn_line}{greeks_line}\n"
+                    f"{hit_line}{whale_line}{greeks_line}\n"
                 )
 
     if not final_df.empty:
@@ -1119,7 +1161,7 @@ if st.button("🚀 Scansiona mercato", type="primary", use_container_width=True)
 
         # Colonne principali — griglia snella senza ~bid/~ask/~SPREAD
         display_cols = [
-            "SIG", "FLOW $", "CLUSTER", "BIAS", "SWEEP", "🐋 DAYS",
+            "SCORE", "SIG", "FLOW $", "CLUSTER", "BIAS", "SWEEP", "🐋 DAYS",
             "OPZIONE", "UNDER", "MID", "volume", "OI", "VOI", "DTE", "IV",
             "ASK_HIT", "EARN", "ITM", "ATM", "OTM",
         ]
@@ -1132,11 +1174,14 @@ if st.button("🚀 Scansiona mercato", type="primary", use_container_width=True)
         final_df = final_df.rename(columns={"bid": "~bid", "ask": "~ask", "SPREAD": "~SPREAD"})
         greeks_cols = [c for c in greeks_cols if c in final_df.columns]
 
-        def hl_earn(val):
-            if val and "⚠️" in str(val):
-                return "background-color:#3a1a00; color:#ffaa00"
-            return ""
-
+        def hl_score(val):
+            try:
+                v = int(str(val).split()[-1])
+                if v >= 75: return "background-color:#0a2a0a; color:#00ff44; font-weight:bold"
+                if v >= 50: return "background-color:#1a2a00; color:#aaff00; font-weight:bold"
+                if v >= 30: return "background-color:#2a2a00; color:#ffdd00"
+                return "background-color:#1a1a1a; color:#888888"
+            except: return ""
         def hl_sig(val):
             if "GO"   in str(val): return "background-color:#1a3a1a; color:#00ff88"
             if "HOLD" in str(val): return "background-color:#3a3a0a; color:#ffdd00"
@@ -1158,11 +1203,14 @@ if st.button("🚀 Scansiona mercato", type="primary", use_container_width=True)
                 if v >= 2: return "background-color:#1a3a1a; color:#00ff88"
             except: pass
             return ""
+        def hl_earn(val):
+            if val and "⚠️" in str(val):
+                return "background-color:#3a1a00; color:#ffaa00"
+            return ""
 
         fmt = {
             "UNDER":   lambda x: f"${x:.2f}"        if pd.notna(x) else "—",
             "MID":     lambda x: f"${x:.2f}"        if pd.notna(x) else "—",
-
             "VOI":     lambda x: f"{float(x):.2f}"  if pd.notna(x) else "—",
             "ASK_HIT": lambda x: f"{float(x):.0f}%" if pd.notna(x) else "—",
             "IV":      lambda x: f"{x:.1f}%"        if pd.notna(x) else "—",
@@ -1174,10 +1222,11 @@ if st.button("🚀 Scansiona mercato", type="primary", use_container_width=True)
 
         styled = (
             final_df[display_cols].reset_index(drop=True).style
+            .map(hl_score, subset=["SCORE"]     if "SCORE"    in final_df.columns else [])
             .map(hl_sig,   subset=["SIG"])
-            .map(hl_ask,   subset=["ASK_HIT"]  if "ASK_HIT"  in final_df.columns else [])
-            .map(hl_sweep, subset=["SWEEP"]     if "SWEEP"    in final_df.columns else [])
-            .map(hl_whale, subset=["🐋 DAYS"]   if "🐋 DAYS"  in final_df.columns else [])
+            .map(hl_ask,   subset=["ASK_HIT"]   if "ASK_HIT"  in final_df.columns else [])
+            .map(hl_sweep, subset=["SWEEP"]      if "SWEEP"    in final_df.columns else [])
+            .map(hl_whale, subset=["🐋 DAYS"]    if "🐋 DAYS"  in final_df.columns else [])
             .map(hl_earn,  subset=["EARN"]       if "EARN"     in final_df.columns else [])
             .format(fmt, na_rep="—")
         )
@@ -1241,5 +1290,5 @@ st.divider()
 st.caption(
     "⚠️ Questo tool è uno screener di primo livello. "
     "L'analisi finale (grafico, contesto macro, greche) va completata su IBKR. "
-    "Nessun ordine viene eseguito automaticamente. — v4.7"
+    "Nessun ordine viene eseguito automaticamente. — v4.8"
 )
