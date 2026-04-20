@@ -55,7 +55,7 @@ def get_sheet(sheet_name: str):
 # =========================
 st.set_page_config(layout="wide", page_title="Options Flow Scanner PRO")
 st.title("🔥 Options Flow Scanner PRO 🔥 by Ugo Fortezze")
-st.caption("Powered by Polygon.io — Greeks | Ask Hit | Sweep | Storico Cluster")
+st.caption("Powered by Polygon.io — Greeks | Ask Hit | Sweep | Storico | Sentiment | Score")
 # Mostra stato connessione Google Sheets
 _gs_client = get_gsheet_client()
 if _gs_client:
@@ -181,139 +181,67 @@ def get_cluster_repeat(ticker, strike, expiration, contract_type, history=None) 
             days.add(str(e.get("date","")))
     return len(days)
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def get_next_earnings(ticker: str) -> str | None:
-    try:
-        url = f"https://api.polygon.io/vX/reference/tickers/{ticker}"
-        r = requests.get(url, params={"apiKey": POLYGON_API_KEY}, timeout=8)
-        if r.status_code == 200:
-            data = r.json().get("results", {})
-            earnings = data.get("next_earnings_date") or data.get("earnings_date")
-            if earnings: return str(earnings)
-    except Exception: pass
-    try:
-        url2 = f"https://api.polygon.io/vX/reference/financials"
-        r2 = requests.get(url2, params={"apiKey": POLYGON_API_KEY, "ticker": ticker,
-            "timeframe": "quarterly", "limit": 1, "order": "desc"}, timeout=8)
-        if r2.status_code == 200:
-            results = r2.json().get("results", [])
-            if results:
-                last_period = results[0].get("end_date","")
-                if last_period:
-                    last_dt = datetime.strptime(last_period, "%Y-%m-%d")
-                    next_dt = last_dt + timedelta(days=91)
-                    return next_dt.strftime("%Y-%m-%d")
-    except Exception: pass
-    return None
+# =========================
+# SENTIMENT PER STRIKE — v5.0
+# Calcola il ratio CALL/PUT per ogni strike nella catena
+# =========================
 
-def earnings_in_dte(ticker: str, dte_max_days: int) -> tuple[bool, str]:
-    earnings_date = get_next_earnings(ticker)
-    if not earnings_date: return False, ""
-    try:
-        today = datetime.today().date()
-        ed = datetime.strptime(earnings_date, "%Y-%m-%d").date()
-        days_to_earnings = (ed - today).days
-        if 0 <= days_to_earnings <= dte_max_days:
-            return True, earnings_date
-    except Exception: pass
-    return False, ""
-
-def compute_score(voi, ask_hit, sweep, whale_days, flow_num, has_earn, iv=None):
-    score = 0
-    try:
-        v = float(voi)
-        if   v >= 10: score += 30
-        elif v >= 5:  score += 22
-        elif v >= 3:  score += 15
-        elif v >= 2:  score += 10
-        elif v >= 1:  score += 5
-    except: pass
-    try:
-        f = float(flow_num)
-        if   f >= 1_000_000: score += 20
-        elif f >= 500_000:   score += 15
-        elif f >= 200_000:   score += 10
-        elif f >= 100_000:   score += 5
-        elif f >= 50_000:    score += 2
-    except: pass
-    try:
-        if ask_hit is not None:
-            ah = float(ask_hit)
-            if   ah >= 80: score += 20
-            elif ah >= 70: score += 15
-            elif ah >= 60: score += 10
-            elif ah >= 50: score += 5
-            elif ah <= 30: score -= 5
-    except: pass
-    try:
-        d = int(whale_days)
-        if   d >= 5: score += 15
-        elif d >= 3: score += 10
-        elif d >= 2: score += 6
-        elif d >= 1: score += 2
-    except: pass
-    if sweep == "🌊": score += 10
-    if has_earn: score -= 15
-    return max(0, min(100, score))
-
-def score_label(score: int) -> str:
-    if score >= 75: return f"🔥 {score}"
-    if score >= 50: return f"⚡ {score}"
-    if score >= 30: return f"👀 {score}"
-    return f"💤 {score}"
-
-def get_voi_baseline(ticker: str, strike, expiration: str, contract_type: str,
-                     history: list = None) -> dict:
+def compute_strike_sentiment(df_full: pd.DataFrame) -> pd.DataFrame:
     """
-    Calcola la baseline storica del VOI per questo contratto.
-    Ritorna: {mean, count, current_anomaly_pct}
-    - mean: media VOI storica
-    - count: numero di osservazioni
-    - anomaly_pct: quanto % il VOI di oggi supera la media (es. +213%)
+    Per ogni strike nella catena, calcola:
+    - call_vol: volume totale CALL su quel strike
+    - put_vol: volume totale PUT su quel strike
+    - ratio: call_vol / put_vol
+    - sentiment: BULLISH / BEARISH / NEUTRO
+    - flow_call: flow $ totale CALL
+    - flow_put: flow $ totale PUT
     """
-    if history is None:
-        history = load_history()
+    if df_full.empty:
+        return pd.DataFrame()
 
-    voi_values = []
-    today_str = datetime.today().strftime("%Y-%m-%d")
+    rows = []
+    strikes = df_full["strike"].unique()
 
-    for e in history:
-        if (str(e.get("ticker","")) == str(ticker) and
-            str(e.get("strike","")) == str(strike) and
-            str(e.get("expiration","")) == str(expiration) and
-            str(e.get("type","")) == str(contract_type)):
-            try:
-                v = float(e.get("voi", 0))
-                if v > 0:
-                    voi_values.append(v)
-            except: pass
+    for strike in sorted(strikes):
+        calls = df_full[(df_full["strike"] == strike) & (df_full["type"] == "CALL")]
+        puts  = df_full[(df_full["strike"] == strike) & (df_full["type"] == "PUT")]
 
-    if len(voi_values) < 2:
-        return {"mean": None, "count": len(voi_values), "anomaly_pct": None}
+        call_vol   = int(calls["volume"].sum()) if not calls.empty else 0
+        put_vol    = int(puts["volume"].sum())  if not puts.empty else 0
+        call_flow  = round(calls["FLOW_POWER_NUM"].sum(), 0) if not calls.empty else 0
+        put_flow   = round(puts["FLOW_POWER_NUM"].sum(), 0)  if not puts.empty else 0
 
-    mean_voi = sum(voi_values) / len(voi_values)
-    return {"mean": round(mean_voi, 2), "count": len(voi_values), "anomaly_pct": None}
+        if call_vol > 0 and put_vol > 0:
+            ratio = round(call_vol / put_vol, 2)
+        elif call_vol > 0:
+            ratio = 99.0  # solo CALL
+        elif put_vol > 0:
+            ratio = 0.01  # solo PUT
+        else:
+            continue
 
-def voi_anomaly_label(current_voi: float, baseline: dict) -> str:
-    """
-    Genera label anomalia VOI rispetto alla baseline storica.
-    Es: "+213% vs media 0.8 (5d)" oppure "—" se dati insufficienti.
-    """
-    if baseline["mean"] is None or baseline["count"] < 2:
-        return ""
-    mean = baseline["mean"]
-    if mean <= 0:
-        return ""
-    pct = round(((current_voi - mean) / mean) * 100, 0)
-    count = baseline["count"]
-    if pct >= 100:
-        return f"🚀 +{int(pct)}% vs {mean:.1f} ({count}d)"
-    elif pct >= 50:
-        return f"📈 +{int(pct)}% vs {mean:.1f} ({count}d)"
-    elif pct >= 0:
-        return f"➡️ +{int(pct)}% vs {mean:.1f} ({count}d)"
-    else:
-        return f"📉 {int(pct)}% vs {mean:.1f} ({count}d)"
+        if ratio >= 2.0:
+            sentiment = "📈 BULLISH"
+            color_hint = "bull"
+        elif ratio <= 0.5:
+            sentiment = "📉 BEARISH"
+            color_hint = "bear"
+        else:
+            sentiment = "⚖️ NEUTRO"
+            color_hint = "neut"
+
+        rows.append({
+            "Strike":     strike,
+            "CALL vol":   call_vol,
+            "PUT vol":    put_vol,
+            "C/P Ratio":  ratio,
+            "Sentiment":  sentiment,
+            "Flow CALL":  format_k(call_flow) if call_flow > 0 else "—",
+            "Flow PUT":   format_k(put_flow)  if put_flow > 0 else "—",
+            "_color":     color_hint,
+        })
+
+    return pd.DataFrame(rows) if rows else pd.DataFrame()
 
 # =========================
 # WATCHLIST — Google Sheets + fallback locale
@@ -496,7 +424,7 @@ PRESETS = {
 preset = PRESETS[mode]
 st.caption(f"ℹ️ {preset['desc']}")
 
-APP_VERSION = "4.9.2"
+APP_VERSION = "5.0"
 if ("last_mode" not in st.session_state or
     st.session_state.get("last_mode") != mode or
     st.session_state.get("app_version") != APP_VERSION):
@@ -767,14 +695,6 @@ def parse_and_filter(raw: list[dict], underlying: float, ticker: str) -> pd.Data
 
     df["SIG"]  = df.apply(signal, axis=1)
     df["BIAS"] = df["type"].apply(lambda x: "📈 L" if x == "CALL" else "📉 S")
-
-    # Earnings flag per ogni contratto
-    def check_earnings(row):
-        has_earn, earn_date = earnings_in_dte(ticker, int(row["DTE"]))
-        if has_earn: return f"⚠️ {earn_date}"
-        return ""
-    df["EARN"] = df.apply(check_earnings, axis=1)
-
     df["ITM"]  = df.apply(lambda r: "✅" if (r["type"]=="CALL" and r["strike"]<underlying)
                                          or (r["type"]=="PUT"  and r["strike"]>underlying) else "", axis=1)
     df["ATM"]  = df["DIST_STRIKE"].apply(lambda x: "🎯" if x <= 1.0 else "")
@@ -788,11 +708,9 @@ def parse_and_filter(raw: list[dict], underlying: float, ticker: str) -> pd.Data
 
 def enrich_with_flow_data(df: pd.DataFrame, ticker: str, top_n: int = 15) -> pd.DataFrame:
     df = df.copy()
-    df["ASK_HIT"]  = None
-    df["SWEEP"]    = ""
-    df["🐋 DAYS"]  = 0
-    df["SCORE"]    = ""
-    df["VOI_ANOM"] = ""
+    df["ASK_HIT"] = None
+    df["SWEEP"]   = ""
+    df["🐋 DAYS"] = 0
 
     # Carica storico UNA SOLA VOLTA — evita chiamate ripetute a Google Sheets
     cached_history = load_history()
@@ -801,7 +719,7 @@ def enrich_with_flow_data(df: pd.DataFrame, ticker: str, top_n: int = 15) -> pd.
     progress = st.progress(0, text="📡 Analisi flusso in corso...")
 
     for i, idx in enumerate(idx_list):
-        row       = df.loc[idx]
+        row          = df.loc[idx]
         ask_hit_pct, is_sweep = get_ask_hit_real(
             row.get("ticker_sym", ""), row.get("bid", 0), row.get("ask", 0)
         )
@@ -813,31 +731,11 @@ def enrich_with_flow_data(df: pd.DataFrame, ticker: str, top_n: int = 15) -> pd.
                        row.get("type",""), row.get("FLOW_POWER_NUM",0),
                        row.get("VOI",0), ask_hit_pct, sweep_str)
 
-        # 🐋 DAYS
-        whale_days = get_cluster_repeat(
+        # Passa lo storico cached — nessuna chiamata extra a GSheets
+        df.at[idx, "🐋 DAYS"] = get_cluster_repeat(
             ticker, row.get("strike"), row.get("exp_str",""), row.get("type",""),
             history=cached_history
         )
-        df.at[idx, "🐋 DAYS"] = whale_days
-
-        # v4.9 — Baseline storica VOI
-        baseline = get_voi_baseline(
-            ticker, row.get("strike"), row.get("exp_str",""), row.get("type",""),
-            history=cached_history
-        )
-        try:    current_voi = float(row.get("VOI", 0))
-        except: current_voi = 0
-        df.at[idx, "VOI_ANOM"] = voi_anomaly_label(current_voi, baseline)
-
-        # Score composito
-        has_earn_flag = bool(row.get("EARN",""))
-        score = compute_score(
-            voi=current_voi, ask_hit=ask_hit_pct, sweep=sweep_str,
-            whale_days=whale_days, flow_num=row.get("FLOW_POWER_NUM",0),
-            has_earn=has_earn_flag, iv=row.get("IV")
-        )
-        df.at[idx, "SCORE"] = score_label(score)
-
         progress.progress((i+1)/len(idx_list), text=f"📡 Flow analysis: {i+1}/{len(idx_list)}")
 
     progress.empty()
@@ -860,12 +758,6 @@ def scan_ticker(ticker: str) -> pd.DataFrame:
         return pd.DataFrame()
 
     st.caption(f"📌 {ticker} — prezzo sottostante: **${underlying}**")
-    has_earn, earn_date = earnings_in_dte(ticker, dte_max)
-    if has_earn:
-        days_to = (datetime.strptime(earn_date, "%Y-%m-%d").date() - datetime.today().date()).days
-        st.warning(f"⚠️ **EARNINGS ALERT** — {ticker} ha earnings il **{earn_date}** ({days_to} giorni). "
-                   f"Le opzioni con scadenza dopo questa data sono più care (IV elevata). "
-                   f"Valuta se il segnale è da earnings o da flusso reale.")
     with st.spinner(f"📡 Scaricando opzioni {ticker}..."):
         raw = get_options_chain(ticker, dte_min, dte_max)
     if not raw:
@@ -881,12 +773,47 @@ def scan_ticker(ticker: str) -> pd.DataFrame:
     bias_label = "📈 BULLISH" if pc < 0.8 else ("📉 BEARISH" if pc > 1.2 else "⚖️ NEUTRO")
     st.caption(f"Put/Call Ratio: **{pc}** | CALL vol: {cv:,} | PUT vol: {pv:,} | Bias: {bias_label}")
 
-    return enrich_with_flow_data(df, ticker, top_n=15)
+    # v5.0 — Sentiment per strike
+    df_enriched = enrich_with_flow_data(df, ticker, top_n=15)
+
+    if not df_enriched.empty:
+        # Usa df completo (prima del top_n) per il sentiment aggregato
+        sentiment_df = compute_strike_sentiment(df)
+        if not sentiment_df.empty:
+            with st.expander(f"📊 Sentiment per Strike — {ticker}", expanded=False):
+                def hl_sentiment(val):
+                    if "BULLISH" in str(val): return "background-color:#1a3a1a; color:#00ff88"
+                    if "BEARISH" in str(val): return "background-color:#3a0a0a; color:#ff4444"
+                    return "background-color:#2a2a0a; color:#ffdd00"
+
+                display_sent = sentiment_df.drop(columns=["_color"]).copy()
+                st.dataframe(
+                    display_sent.style.map(hl_sentiment, subset=["Sentiment"])
+                    .format({"Strike": lambda x: str(int(x)) if x==int(x) else f"{x:.2f}",
+                             "C/P Ratio": lambda x: f"{x:.2f}"}),
+                    use_container_width=True, hide_index=True
+                )
+                # Top 3 strike più bullish e più bearish
+                bulls = sentiment_df[sentiment_df["_color"]=="bull"].nlargest(3,"C/P Ratio")
+                bears = sentiment_df[sentiment_df["_color"]=="bear"].nsmallest(3,"C/P Ratio")
+                col_b, col_s = st.columns(2)
+                with col_b:
+                    if not bulls.empty:
+                        st.markdown("**🎯 Strike più BULLISH:**")
+                        for _, r in bulls.iterrows():
+                            st.markdown(f"Strike **{int(r['Strike']) if r['Strike']==int(r['Strike']) else r['Strike']}** — C/P {r['C/P Ratio']:.2f} | CALL {r['CALL vol']:,} vs PUT {r['PUT vol']:,}")
+                with col_s:
+                    if not bears.empty:
+                        st.markdown("**🎯 Strike più BEARISH:**")
+                        for _, r in bears.iterrows():
+                            st.markdown(f"Strike **{int(r['Strike']) if r['Strike']==int(r['Strike']) else r['Strike']}** — C/P {r['C/P Ratio']:.2f} | CALL {r['CALL vol']:,} vs PUT {r['PUT vol']:,}")
+
+    return df_enriched
 
 # =========================
 # LEGENDA / MANUALE IN-APP
 # =========================
-with st.expander("📖 Manuale — Options Flow Scanner PRO v4.9.2"):
+with st.expander("📖 Manuale — Options Flow Scanner PRO v4.5"):
     st.markdown("""
 ## 🎯 Obiettivo del Tool
 Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volumi anomali rispetto all'open interest, con focus su **smart money** e **accumulo balena**. Nessuna esecuzione automatica — il controllo finale è sempre tuo.
@@ -918,7 +845,6 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
 | **ASK_HIT %** | % trades at/near ask | ≥70% 🟢 buyer aggressivo · ≤30% 🔴 vendita · 30–70% 🟡 neutro |
 | **🐋 DAYS** | Giorni distinti nello storico | ≥2 = accumulo · ≥3 = balena che costruisce posizione |
 | **VOI** | Volume / Open Interest | >1 = soldi freschi (nuova apertura) · <1 = chiusura posizione |
-| **VOI_ANOM** | VOI oggi vs media storica | 🚀 = anomalia esplosiva · 📈 = sopra media · 📉 = sotto media |
 | **DTE** | Giorni alla scadenza | <7 = speculativo · 60–210 = swing istituzionale |
 | **IV** | Implied Volatility % | Alta = opzione cara · Bassa = economica vs storia |
 | **delta** | Sensitività a $1 di movimento | 0.10–0.30 = OTM (leva alta) · 0.40–0.60 = ATM · >0.70 = ITM |
@@ -974,52 +900,11 @@ La colonna **🐋 DAYS** conta quante volte lo stesso contratto (ticker + strike
 
 ---
 
-## 📊 VOI_ANOM — Anomalia VOI storica (v4.9)
-
-La colonna **VOI_ANOM** confronta il VOI di oggi con la media storica di quel contratto specifico:
-
-| Label | Significato |
-|---|---|
-| 🚀 +213% vs 0.8 (5d) | VOI esplosivo — più del doppio della media su 5 giorni |
-| 📈 +80% vs 1.2 (3d) | VOI significativamente sopra la media |
-| ➡️ +15% vs 2.0 (4d) | VOI leggermente sopra la media — normale variazione |
-| 📉 -40% vs 3.1 (6d) | VOI sotto la media — flusso in calo |
-| vuota | Dati insufficienti — meno di 2 osservazioni storiche |
-
-**Come usarla:** un contratto con VOI 2.5 sembra normale, ma se la sua media storica è 0.8 → stai vedendo un +213% di anomalia. Quello è il segnale reale. Cresce di precisione ogni giorno che scansioni.
-
----
-
-## 🎯 Score Composito (v4.8)
-
-Lo **SCORE** è un punteggio da 0 a 100 che combina tutti i segnali in un unico numero leggibile a colpo d'occhio:
-
-| Score | Label | Significato |
-|---|---|---|
-| **75–100** | 🔥 | Segnale eccezionale — tutti i fattori allineati |
-| **50–74** | ⚡ | Segnale forte — vale un'analisi approfondita su IBKR |
-| **30–49** | 👀 | Segnale discreto — tieni d'occhio nei prossimi giorni |
-| **0–29** | 💤 | Segnale debole — rumore di fondo |
-
----
-
-## ⚠️ Regola Operativa — Earnings Alert
-
-Quando vedi **EARN ⚠️** su un contratto:
-
-| Situazione | Azione |
-|---|---|
-| **EARN vuoto + SCORE alto** | ✅ Segnale affidabile — analizza su IBKR |
-| **EARN ⚠️ + SCORE alto** | ⚠️ Potrebbe essere speculazione pre-earnings |
-| **EARN ⚠️ + VOI molto alto** | ⚠️ Rischio IV crush dopo l'evento |
-
----
-
 ## ⚠️ Note Operative
 
 - Questo tool è uno **screener di primo livello**. L'analisi finale va completata su IBKR (grafico, contesto macro, greche).
 - Il flusso di opzioni anticipa spesso il movimento del sottostante di 1–5 giorni, ma non è infallibile.
-- La combinazione più forte: **SCORE 🔥 + VOI_ANOM 🚀 + ASK_HIT ≥55% + SWEEP 🌊 + 🐋 DAYS ≥2 + EARN vuoto**
+- La combinazione più forte: **VOI alto + ASK_HIT ≥55% + SWEEP 🌊 + 🐋 DAYS ≥2**
 - Paper trading consigliato per le prime settimane: 1–2 operazioni al giorno con note su entry, razionale e risultato.
 - Nessun ordine viene eseguito automaticamente. Il controllo finale è sempre tuo.
 """)
@@ -1221,12 +1106,18 @@ if st.button("🚀 Scansiona mercato", type="primary", use_container_width=True)
                     hit_line  = f"Ask Hit: {hit_emoji} <b>{ask_hit_val:.0f}%</b>  {sweep_val}\n"
                 if whale_days >= 2:
                     whale_line = f"🐋 Accumulo: <b>{whale_days} giorni</b>\n"
+                score_val = row.get("SCORE","")
+                earn_val  = row.get("EARN","")
+                voi_anom  = row.get("VOI_ANOM","")
+                score_line = f"Score: <b>{score_val}</b>\n" if score_val else ""
+                earn_line  = f"⚠️ Earnings: <b>{earn_val}</b>\n" if earn_val else ""
+                anom_line  = f"VOI Anomalia: {voi_anom}\n" if voi_anom else ""
                 telegram_text += (
-                    f"{row['SIG']}  {row['BIAS']}\n"
+                    f"{score_val}  {row['SIG']}  {row['BIAS']}\n"
                     f"<b>{row['OPZIONE']}</b>\n"
                     f"Underlying: ${row['UNDER']}  |  Mid: ${row['MID']}\n"
                     f"Flow: <b>{row['FLOW $']}</b>  |  VOI: {row['VOI']}\n"
-                    f"{hit_line}{whale_line}{greeks_line}\n"
+                    f"{hit_line}{whale_line}{earn_line}{anom_line}{greeks_line}\n"
                 )
 
     if not final_df.empty:
@@ -1247,9 +1138,9 @@ if st.button("🚀 Scansiona mercato", type="primary", use_container_width=True)
 
         # Colonne principali — griglia snella senza ~bid/~ask/~SPREAD
         display_cols = [
-            "SCORE", "SIG", "FLOW $", "CLUSTER", "BIAS", "SWEEP", "🐋 DAYS",
-            "OPZIONE", "UNDER", "MID", "volume", "OI", "VOI", "VOI_ANOM", "DTE", "IV",
-            "ASK_HIT", "EARN", "ITM", "ATM", "OTM",
+            "SIG", "FLOW $", "CLUSTER", "BIAS", "SWEEP", "🐋 DAYS",
+            "OPZIONE", "UNDER", "MID", "volume", "OI", "VOI", "DTE", "IV",
+            "ASK_HIT", "ITM", "ATM", "OTM",
         ]
         display_cols = [c for c in display_cols if c in final_df.columns]
 
@@ -1260,23 +1151,6 @@ if st.button("🚀 Scansiona mercato", type="primary", use_container_width=True)
         final_df = final_df.rename(columns={"bid": "~bid", "ask": "~ask", "SPREAD": "~SPREAD"})
         greeks_cols = [c for c in greeks_cols if c in final_df.columns]
 
-        def hl_voi_anom(val):
-            s = str(val)
-            if "🚀" in s: return "background-color:#0a1a3a; color:#00aaff; font-weight:bold"
-            if "📈" in s: return "background-color:#0a2a1a; color:#00ff88"
-            if "📉" in s: return "background-color:#2a0a0a; color:#ff6666"
-            return ""
-        def hl_score(val):
-            try:
-                v = int(str(val).split()[-1])
-                if v >= 75: return "background-color:#0a2a0a; color:#00ff44; font-weight:bold"
-                if v >= 50: return "background-color:#1a2a00; color:#aaff00; font-weight:bold"
-                if v >= 30: return "background-color:#2a2a00; color:#ffdd00"
-                return "background-color:#1a1a1a; color:#888888"
-            except: return ""
-        def hl_earn(val):
-            if val and "⚠️" in str(val): return "background-color:#3a1a00; color:#ffaa00"
-            return ""
         def hl_sig(val):
             if "GO"   in str(val): return "background-color:#1a3a1a; color:#00ff88"
             if "HOLD" in str(val): return "background-color:#3a3a0a; color:#ffdd00"
@@ -1302,6 +1176,7 @@ if st.button("🚀 Scansiona mercato", type="primary", use_container_width=True)
         fmt = {
             "UNDER":   lambda x: f"${x:.2f}"        if pd.notna(x) else "—",
             "MID":     lambda x: f"${x:.2f}"        if pd.notna(x) else "—",
+
             "VOI":     lambda x: f"{float(x):.2f}"  if pd.notna(x) else "—",
             "ASK_HIT": lambda x: f"{float(x):.0f}%" if pd.notna(x) else "—",
             "IV":      lambda x: f"{x:.1f}%"        if pd.notna(x) else "—",
@@ -1313,13 +1188,10 @@ if st.button("🚀 Scansiona mercato", type="primary", use_container_width=True)
 
         styled = (
             final_df[display_cols].reset_index(drop=True).style
-            .map(hl_score,    subset=["SCORE"]     if "SCORE"    in final_df.columns else [])
-            .map(hl_sig,      subset=["SIG"])
-            .map(hl_ask,      subset=["ASK_HIT"]   if "ASK_HIT"  in final_df.columns else [])
-            .map(hl_sweep,    subset=["SWEEP"]      if "SWEEP"    in final_df.columns else [])
-            .map(hl_whale,    subset=["🐋 DAYS"]    if "🐋 DAYS"  in final_df.columns else [])
-            .map(hl_earn,     subset=["EARN"]       if "EARN"     in final_df.columns else [])
-            .map(hl_voi_anom, subset=["VOI_ANOM"]   if "VOI_ANOM" in final_df.columns else [])
+            .map(hl_sig,   subset=["SIG"])
+            .map(hl_ask,   subset=["ASK_HIT"]  if "ASK_HIT"  in final_df.columns else [])
+            .map(hl_sweep, subset=["SWEEP"]     if "SWEEP"    in final_df.columns else [])
+            .map(hl_whale, subset=["🐋 DAYS"]   if "🐋 DAYS"  in final_df.columns else [])
             .format(fmt, na_rep="—")
         )
         st.dataframe(styled, use_container_width=True, hide_index=True)
@@ -1381,6 +1253,4 @@ if st.session_state.get("scan_records"):
 st.divider()
 st.caption(
     "⚠️ Questo tool è uno screener di primo livello. "
-    "L'analisi finale (grafico, contesto macro, greche) va completata su IBKR. "
-    "Nessun ordine viene eseguito automaticamente. — v4.9.2"
-)
+    "L'analisi finale (grafico, contesto macro, greche) va completata su IBKR. V5.0 "
