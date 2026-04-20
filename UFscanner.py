@@ -308,6 +308,71 @@ def load_watchlist_history(ticker=None, strike=None, expiration=None, contract_t
     return rows
 
 # =========================
+# EARNINGS ALERT — v4.7
+# =========================
+
+@st.cache_data(ttl=3600, show_spinner=False)  # Cache 1 ora
+def get_next_earnings(ticker: str) -> str | None:
+    """
+    Recupera la prossima data di earnings da Polygon.
+    Ritorna la data come stringa YYYY-MM-DD o None se non disponibile.
+    """
+    try:
+        url = f"https://api.polygon.io/vX/reference/tickers/{ticker}"
+        r = requests.get(url, params={"apiKey": POLYGON_API_KEY}, timeout=8)
+        if r.status_code == 200:
+            data = r.json().get("results", {})
+            # Polygon fornisce next_earnings_date nel campo metadata
+            earnings = data.get("next_earnings_date") or data.get("earnings_date")
+            if earnings:
+                return str(earnings)
+    except Exception:
+        pass
+
+    # Fallback: cerca nei financial results
+    try:
+        url2 = f"https://api.polygon.io/vX/reference/financials"
+        r2 = requests.get(url2, params={
+            "apiKey": POLYGON_API_KEY,
+            "ticker": ticker,
+            "timeframe": "quarterly",
+            "limit": 1,
+            "order": "desc"
+        }, timeout=8)
+        if r2.status_code == 200:
+            results = r2.json().get("results", [])
+            if results:
+                # Prossimo earnings stimato ~ 3 mesi dopo l'ultimo
+                from datetime import datetime, timedelta
+                last_period = results[0].get("end_date","")
+                if last_period:
+                    last_dt = datetime.strptime(last_period, "%Y-%m-%d")
+                    next_dt = last_dt + timedelta(days=91)
+                    return next_dt.strftime("%Y-%m-%d")
+    except Exception:
+        pass
+    return None
+
+def earnings_in_dte(ticker: str, dte_max_days: int) -> tuple[bool, str]:
+    """
+    Controlla se ci sono earnings entro il DTE massimo.
+    Ritorna (True, data) se sì, (False, "") altrimenti.
+    """
+    earnings_date = get_next_earnings(ticker)
+    if not earnings_date:
+        return False, ""
+    try:
+        from datetime import datetime
+        today = datetime.today().date()
+        ed = datetime.strptime(earnings_date, "%Y-%m-%d").date()
+        days_to_earnings = (ed - today).days
+        if 0 <= days_to_earnings <= dte_max_days:
+            return True, earnings_date
+    except Exception:
+        pass
+    return False, ""
+
+# =========================
 # MODALITÀ
 # =========================
 mode = st.radio(
@@ -362,7 +427,7 @@ PRESETS = {
 preset = PRESETS[mode]
 st.caption(f"ℹ️ {preset['desc']}")
 
-APP_VERSION = "4.5"
+APP_VERSION = "4.7"
 if ("last_mode" not in st.session_state or
     st.session_state.get("last_mode") != mode or
     st.session_state.get("app_version") != APP_VERSION):
@@ -633,6 +698,14 @@ def parse_and_filter(raw: list[dict], underlying: float, ticker: str) -> pd.Data
 
     df["SIG"]  = df.apply(signal, axis=1)
     df["BIAS"] = df["type"].apply(lambda x: "📈 L" if x == "CALL" else "📉 S")
+
+    # v4.7 — Earnings flag: controlla se earnings cade entro il DTE del contratto
+    def check_earnings(row):
+        has_earn, earn_date = earnings_in_dte(ticker, int(row["DTE"]))
+        if has_earn:
+            return f"⚠️ {earn_date}"
+        return ""
+    df["EARN"] = df.apply(check_earnings, axis=1)
     df["ITM"]  = df.apply(lambda r: "✅" if (r["type"]=="CALL" and r["strike"]<underlying)
                                          or (r["type"]=="PUT"  and r["strike"]>underlying) else "", axis=1)
     df["ATM"]  = df["DIST_STRIKE"].apply(lambda x: "🎯" if x <= 1.0 else "")
@@ -696,6 +769,14 @@ def scan_ticker(ticker: str) -> pd.DataFrame:
         return pd.DataFrame()
 
     st.caption(f"📌 {ticker} — prezzo sottostante: **${underlying}**")
+
+    # v4.7 — Earnings warning banner
+    has_earn, earn_date = earnings_in_dte(ticker, dte_max)
+    if has_earn:
+        days_to = (datetime.strptime(earn_date, "%Y-%m-%d").date() - datetime.today().date()).days
+        st.warning(f"⚠️ **EARNINGS ALERT** — {ticker} ha earnings il **{earn_date}** ({days_to} giorni). "
+                   f"Le opzioni con scadenza dopo questa data sono più care (IV elevata). "
+                   f"Valuta se il segnale è da earnings o da flusso reale.")
     with st.spinner(f"📡 Scaricando opzioni {ticker}..."):
         raw = get_options_chain(ticker, dte_min, dte_max)
     if not raw:
@@ -716,7 +797,7 @@ def scan_ticker(ticker: str) -> pd.DataFrame:
 # =========================
 # LEGENDA / MANUALE IN-APP
 # =========================
-with st.expander("📖 Manuale — Options Flow Scanner PRO v4.5"):
+with st.expander("📖 Manuale — Options Flow Scanner PRO v4.7"):
     st.markdown("""
 ## 🎯 Obiettivo del Tool
 Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volumi anomali rispetto all'open interest, con focus su **smart money** e **accumulo balena**. Nessuna esecuzione automatica — il controllo finale è sempre tuo.
@@ -754,6 +835,7 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
 | **gamma** | Variazione delta per $1 | Alto gamma + DTE breve = posizione esplosiva vicino scadenza |
 | **theta** | Decadimento temporale giornaliero | Negativo per chi compra. Con DTE 60+ è gestibile |
 | **vega** | Sensitività alla volatilità | Alto vega = beneficia da spike di volatilità (es. eventi macro) |
+| **EARN** | Earnings nel DTE | ⚠️ data = earnings entro la scadenza — valuta se il segnale è da earnings |
 | **ITM** | Strike favorevole vs prezzo | ✅ = In The Money |
 | **ATM** | Strike ≤1% dal prezzo | 🎯 = At The Money |
 | **OTM** | Strike sfavorevole vs prezzo | ⬆️ = Out of The Money |
@@ -1009,12 +1091,14 @@ if st.button("🚀 Scansiona mercato", type="primary", use_container_width=True)
                     hit_line  = f"Ask Hit: {hit_emoji} <b>{ask_hit_val:.0f}%</b>  {sweep_val}\n"
                 if whale_days >= 2:
                     whale_line = f"🐋 Accumulo: <b>{whale_days} giorni</b>\n"
+                earn_val  = row.get("EARN","")
+                earn_line = f"⚠️ Earnings: <b>{earn_val}</b>\n" if earn_val else ""
                 telegram_text += (
                     f"{row['SIG']}  {row['BIAS']}\n"
                     f"<b>{row['OPZIONE']}</b>\n"
                     f"Underlying: ${row['UNDER']}  |  Mid: ${row['MID']}\n"
                     f"Flow: <b>{row['FLOW $']}</b>  |  VOI: {row['VOI']}\n"
-                    f"{hit_line}{whale_line}{greeks_line}\n"
+                    f"{hit_line}{whale_line}{earn_line}{greeks_line}\n"
                 )
 
     if not final_df.empty:
@@ -1037,7 +1121,7 @@ if st.button("🚀 Scansiona mercato", type="primary", use_container_width=True)
         display_cols = [
             "SIG", "FLOW $", "CLUSTER", "BIAS", "SWEEP", "🐋 DAYS",
             "OPZIONE", "UNDER", "MID", "volume", "OI", "VOI", "DTE", "IV",
-            "ASK_HIT", "ITM", "ATM", "OTM",
+            "ASK_HIT", "EARN", "ITM", "ATM", "OTM",
         ]
         display_cols = [c for c in display_cols if c in final_df.columns]
 
@@ -1047,6 +1131,11 @@ if st.button("🚀 Scansiona mercato", type="primary", use_container_width=True)
         # Rinomina bid/ask con ~ per indicare che sono stime (solo per expander Greeks)
         final_df = final_df.rename(columns={"bid": "~bid", "ask": "~ask", "SPREAD": "~SPREAD"})
         greeks_cols = [c for c in greeks_cols if c in final_df.columns]
+
+        def hl_earn(val):
+            if val and "⚠️" in str(val):
+                return "background-color:#3a1a00; color:#ffaa00"
+            return ""
 
         def hl_sig(val):
             if "GO"   in str(val): return "background-color:#1a3a1a; color:#00ff88"
@@ -1089,6 +1178,7 @@ if st.button("🚀 Scansiona mercato", type="primary", use_container_width=True)
             .map(hl_ask,   subset=["ASK_HIT"]  if "ASK_HIT"  in final_df.columns else [])
             .map(hl_sweep, subset=["SWEEP"]     if "SWEEP"    in final_df.columns else [])
             .map(hl_whale, subset=["🐋 DAYS"]   if "🐋 DAYS"  in final_df.columns else [])
+            .map(hl_earn,  subset=["EARN"]       if "EARN"     in final_df.columns else [])
             .format(fmt, na_rep="—")
         )
         st.dataframe(styled, use_container_width=True, hide_index=True)
@@ -1151,5 +1241,5 @@ st.divider()
 st.caption(
     "⚠️ Questo tool è uno screener di primo livello. "
     "L'analisi finale (grafico, contesto macro, greche) va completata su IBKR. "
-    "Nessun ordine viene eseguito automaticamente. — v4.5"
+    "Nessun ordine viene eseguito automaticamente. — v4.7"
 )
