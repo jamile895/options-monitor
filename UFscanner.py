@@ -27,7 +27,6 @@ SCOPES = [
 def get_gsheet_client():
     try:
         raw = st.secrets["GOOGLE_SERVICE_ACCOUNT"]
-        # Prova prima come stringa JSON, poi come dict nativo di Streamlit
         if isinstance(raw, str):
             service_account_info = json.loads(raw)
         else:
@@ -56,7 +55,6 @@ def get_sheet(sheet_name: str):
 st.set_page_config(layout="wide", page_title="Options Flow Scanner PRO")
 st.title("🔥 Options Flow Scanner PRO 🔥 by Ugo Fortezze")
 st.caption("Powered by Polygon.io — Greeks | Ask Hit | Sweep | Storico Cluster")
-# Mostra stato connessione Google Sheets
 _gs_client = get_gsheet_client()
 if _gs_client:
     st.caption("📊 Google Sheets: ✅ connesso — storico e watchlist persistenti")
@@ -64,13 +62,13 @@ else:
     st.caption("📊 Google Sheets: ⚠️ non connesso — storico salvato localmente")
 
 # =========================
-# STORICO SCANSIONI — Google Sheets + fallback locale
+# STORICO SCANSIONI
 # =========================
 HISTORY_COLS  = ["date","ticker","strike","expiration","type","flow","voi","ask_hit","sweep","iv"]
 WATCHLIST_COLS = ["ticker","strike","expiration","type","note","added"]
 WATCHLIST_HISTORY_COLS = ["date","ticker","strike","expiration","type","mid","voi","iv","volume","underlying"]
 
-@st.cache_data(ttl=300)  # Cache 5 minuti — riduce chiamate a GSheets
+@st.cache_data(ttl=300)
 def load_history() -> list:
     sheet = get_sheet("history")
     if sheet:
@@ -87,16 +85,13 @@ def load_history() -> list:
             pass
     return []
 
-# Buffer in-memory per batch writing — evita chiamate ripetute a GSheets
 _history_buffer = []
 
 def save_history_row(entry: dict):
-    """Aggiunge al buffer locale. Chiama flush_history_buffer() per salvare su GSheets."""
     global _history_buffer
     _history_buffer.append(entry)
 
 def flush_history_buffer():
-    """Scrive tutto il buffer su Google Sheets in una sola chiamata batch."""
     global _history_buffer
     if not _history_buffer:
         return
@@ -109,7 +104,7 @@ def flush_history_buffer():
                 if not existing:
                     sheet.append_row(HISTORY_COLS)
                 rows = [[str(e.get(c, "")) for c in HISTORY_COLS] for e in _history_buffer]
-                sheet.append_rows(rows)  # Una sola chiamata per tutte le righe!
+                sheet.append_rows(rows)
                 _history_buffer = []
                 load_history.clear()
                 return True
@@ -118,7 +113,6 @@ def flush_history_buffer():
                     time.sleep(2 ** attempt)
                     continue
                 break
-    # Fallback locale
     try:
         history = []
         if os.path.exists("scan_history.json"):
@@ -131,23 +125,10 @@ def flush_history_buffer():
         _history_buffer = []
     except Exception:
         pass
-    # Fallback locale
-    try:
-        history = []
-        if os.path.exists("scan_history.json"):
-            with open("scan_history.json", "r") as f:
-                history = json.load(f)
-        history.append(entry)
-        history = history[-500:]
-        with open("scan_history.json", "w") as f:
-            json.dump(history, f)
-    except Exception:
-        pass
     return False
 
 def add_to_history(ticker, strike, expiration, contract_type, flow_power, voi, ask_hit, sweep, iv=None):
     today_str = datetime.today().strftime("%Y-%m-%d")
-    # Controlla solo nel buffer corrente per evitare chiamate a GSheets
     for e in _history_buffer:
         if (str(e.get("date","")) == today_str and
             str(e.get("ticker","")) == str(ticker) and
@@ -290,7 +271,7 @@ def voi_anomaly_label(current_voi: float, baseline: dict) -> str:
     else:           return f"📉 {int(pct)}% vs {mean:.1f} ({count}d)"
 
 # =========================
-# SENTIMENT PER STRIKE — v5.0
+# SENTIMENT PER STRIKE
 # =========================
 
 def compute_strike_sentiment(df_full: pd.DataFrame) -> pd.DataFrame:
@@ -317,10 +298,10 @@ def compute_strike_sentiment(df_full: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows) if rows else pd.DataFrame()
 
 # =========================
-# WATCHLIST — Google Sheets + fallback locale
+# WATCHLIST
 # =========================
 
-@st.cache_data(ttl=300)  # Cache 5 minuti
+@st.cache_data(ttl=300)
 def load_watchlist() -> list:
     sheet = get_sheet("watchlist")
     if sheet:
@@ -388,7 +369,6 @@ def add_to_watchlist(ticker: str, strike: float, expiration: str, contract_type:
     except Exception:
         return False
 
-
 def save_watchlist_snapshot(ticker, strike, expiration, contract_type, mid, voi, iv, volume, underlying):
     today_str = datetime.today().strftime("%Y-%m-%d")
     sheet = get_sheet("wl_history")
@@ -452,9 +432,6 @@ mode = st.radio(
     key="mode_radio"
 )
 
-# =========================
-# PRESET
-# =========================
 PRESETS = {
     "SMALL CAP": {
         "volume_min": 100, "voi_min": 1.5, "dte_max": 60, "dte_min": 2,
@@ -497,7 +474,7 @@ PRESETS = {
 preset = PRESETS[mode]
 st.caption(f"ℹ️ {preset['desc']}")
 
-APP_VERSION = "5.0"
+APP_VERSION = "5.1"
 if ("last_mode" not in st.session_state or
     st.session_state.get("last_mode") != mode or
     st.session_state.get("app_version") != APP_VERSION):
@@ -515,9 +492,6 @@ if ("last_mode" not in st.session_state or
     st.session_state["ask_hit_min"]     = float(preset["ask_hit_min"])
     st.session_state["flow_min"]        = int(preset["flow_min"])
 
-# =========================
-# SLIDERS
-# =========================
 col_s1, col_s2 = st.columns(2)
 with col_s1:
     volume_min      = st.slider("Volume minimo (contratti)",  0,     50000,   st.session_state["volume_min"],               key="volume_min")
@@ -557,7 +531,10 @@ def format_k(x):
     elif x >= 1_000:   return f"{x/1_000:.1f}K"
     return str(int(x))
 
-def send_telegram_message(text):
+def send_telegram_message(text: str) -> bool:
+    """Invia messaggio Telegram. Tronca automaticamente a 4096 caratteri."""
+    if len(text) > 4000:
+        text = text[:4000] + "\n\n... [troncato]"
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     try:
         r = requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}, timeout=5)
@@ -680,21 +657,16 @@ def parse_and_filter(raw: list[dict], underlying: float, ticker: str) -> pd.Data
         try:    exp_dt = pd.to_datetime(exp_str)
         except: continue
 
-        volume = day.get("volume") or 0
-        oi     = item.get("open_interest") or 0
-
-        # last_quote vuoto con piano Options Starter per molti contratti
-        # Usiamo day.close come prezzo principale (ritardo 15min)
+        volume    = day.get("volume") or 0
+        oi        = item.get("open_interest") or 0
         day_close = day.get("close") or 0
         day_vwap  = day.get("vwap")  or 0
         mid = day_close if day_close > 0 else (day_vwap if day_vwap > 0 else 0)
 
-        # Stima bid/ask da spread tipico SPY (circa 1-3% del MID)
-        # Per contratti liquidi SPY lo spread è stretto
         if mid > 0:
-            half_spread = max(0.01, round(mid * 0.015, 2))  # ~1.5% del MID
-            bid = round(mid - half_spread, 2)
-            ask = round(mid + half_spread, 2)
+            half_spread = max(0.01, round(mid * 0.015, 2))
+            bid    = round(mid - half_spread, 2)
+            ask    = round(mid + half_spread, 2)
             spread = round(ask - bid, 2)
         else:
             bid = ask = spread = None
@@ -710,8 +682,7 @@ def parse_and_filter(raw: list[dict], underlying: float, ticker: str) -> pd.Data
             "strike": strike, "expiration": exp_dt, "exp_str": exp_str,
             "volume": int(volume), "OI": int(oi),
             "MID": round(mid, 2),
-            "bid": bid, "ask": ask,
-            "SPREAD": spread,
+            "bid": bid, "ask": ask, "SPREAD": spread,
             "IV":    round(iv * 100, 1) if iv else None,
             "delta": round(abs(delta), 3) if delta is not None else None,
             "gamma": round(gamma, 4)      if gamma is not None else None,
@@ -768,6 +739,7 @@ def parse_and_filter(raw: list[dict], underlying: float, ticker: str) -> pd.Data
 
     df["SIG"]  = df.apply(signal, axis=1)
     df["BIAS"] = df["type"].apply(lambda x: "📈 L" if x == "CALL" else "📉 S")
+
     def check_earnings(row):
         has_earn, earn_date = earnings_in_dte(ticker, int(row["DTE"]))
         if has_earn: return f"⚠️ {earn_date}"
@@ -854,7 +826,6 @@ def scan_ticker(ticker: str) -> pd.DataFrame:
     if has_earn:
         days_to = (datetime.strptime(earn_date, "%Y-%m-%d").date() - datetime.today().date()).days
         st.warning(f"⚠️ **EARNINGS ALERT** — {ticker} ha earnings il **{earn_date}** ({days_to} giorni). "
-                   f"Le opzioni con scadenza dopo questa data sono più care (IV elevata). "
                    f"Valuta se il segnale è da earnings o da flusso reale.")
     with st.spinner(f"📡 Scaricando opzioni {ticker}..."):
         raw = get_options_chain(ticker, dte_min, dte_max)
@@ -907,7 +878,7 @@ def scan_ticker(ticker: str) -> pd.DataFrame:
 # =========================
 # LEGENDA / MANUALE IN-APP
 # =========================
-with st.expander("📖 Manuale — Options Flow Scanner PRO v5.0"):
+with st.expander("📖 Manuale — Options Flow Scanner PRO v5.1"):
     st.markdown("""
 ## 🎯 Obiettivo del Tool
 Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volumi anomali rispetto all'open interest, con focus su **smart money** e **accumulo balena**. Nessuna esecuzione automatica — il controllo finale è sempre tuo.
@@ -929,82 +900,27 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
 
 ## 📊 Colonne della Griglia
 
-| Colonna | Formula | Come leggerla |
-|---|---|---|
-| **SIG** | VOI ≥5→GO, ≥2→HOLD, <2→STOP | 🟢 GO = flusso anomalo forte · 🟡 HOLD = interessante · 🔴 STOP = rumore |
-| **FLOW $** | Volume × MID price | Notional totale. >$500K = istituzionale. >$1M = whale |
-| **CLUSTER** | Volume totale per strike | Concentrazione su uno strike specifico |
-| **BIAS** | CALL=📈L / PUT=📉S | Direzione del flusso |
-| **SWEEP** | Trade su ≥2 exchange | 🌊 = ordine istituzionale eseguito su tutti i market maker simultaneamente |
-| **ASK_HIT %** | % trades at/near ask | ≥70% 🟢 buyer aggressivo · ≤30% 🔴 vendita · 30–70% 🟡 neutro |
-| **🐋 DAYS** | Giorni distinti nello storico | ≥2 = accumulo · ≥3 = balena che costruisce posizione |
-| **VOI** | Volume / Open Interest | >1 = soldi freschi (nuova apertura) · <1 = chiusura posizione |
-| **DTE** | Giorni alla scadenza | <7 = speculativo · 60–210 = swing istituzionale |
-| **IV** | Implied Volatility % | Alta = opzione cara · Bassa = economica vs storia |
-| **delta** | Sensitività a $1 di movimento | 0.10–0.30 = OTM (leva alta) · 0.40–0.60 = ATM · >0.70 = ITM |
-| **gamma** | Variazione delta per $1 | Alto gamma + DTE breve = posizione esplosiva vicino scadenza |
-| **theta** | Decadimento temporale giornaliero | Negativo per chi compra. Con DTE 60+ è gestibile |
-| **vega** | Sensitività alla volatilità | Alto vega = beneficia da spike di volatilità (es. eventi macro) |
-| **ITM** | Strike favorevole vs prezzo | ✅ = In The Money |
-| **ATM** | Strike ≤1% dal prezzo | 🎯 = At The Money |
-| **OTM** | Strike sfavorevole vs prezzo | ⬆️ = Out of The Money |
-
----
-
-## 🔍 Filtri Principali
-
-| Filtro | Cosa fa |
+| Colonna | Come leggerla |
 |---|---|
-| **Volume minimo** | Soglia minima di contratti scambiati oggi |
-| **VOI minimo** | >1.0 = nuova apertura (soldi freschi) |
-| **DTE min/max** | Finestra temporale delle scadenze |
-| **Distanza strike % min/max** | Seleziona la zona di moneyness. Es: 5–10% = OTM moderato |
-| **Flow $ minimo** | >$500K = smart money. >$1M = whale |
-| **Ask Hit % minimo** | Solo contratti con buyer aggressivi |
-| **Spread bid/ask max** | Esclude contratti illiquidi |
-| **Delta min/max** | Seleziona il range di leva desiderato |
-
----
-
-## 🐋 Come rilevare l'Accumulo Balena
-
-La colonna **🐋 DAYS** conta quante volte lo stesso contratto (ticker + strike + scadenza) è comparso nelle scansioni precedenti:
-
-- **1 giorno** → segnale singolo, potrebbe essere rumore
-- **2 giorni** 🟢 → attenzione, possibile accumulo in corso
-- **≥3 giorni** 🔵 → balena che sta costruendo una posizione grossa
-
-**Routine consigliata:** Scansiona SPY SWING ogni giorno nelle prime 2 ore di mercato (15:30–17:30 ora italiana). Se vedi lo stesso strike/scadenza per 3+ giorni con Ask Hit ≥55% e SWEEP 🌊 → segnale ad alta convinzione.
-
----
-
-## 📐 Configurazione SPY SWING consigliata
-
-| Parametro | Valore |
-|---|---|
-| Modalità | SPY SWING |
-| Ticker | SPY |
-| Tipo opzione | BOTH (vedi accumulo, operi solo CALL) |
-| DTE | 60 – 210 giorni |
-| VOI min | 1.2 |
-| Flow $ min | $500.000 |
-| Distanza strike | 5% – 10% (OTM moderato) |
-| Ask Hit % min | 55% |
-| Delta | 0.10 – 0.70 |
+| **SCORE** | 🔥≥75 · ⚡≥50 · 👀≥30 · 💤<30 |
+| **SIG** | 🟢 GO = VOI≥5 · 🟡 HOLD = VOI≥2 · 🔴 STOP = VOI<2 |
+| **FLOW $** | >$500K = istituzionale · >$1M = whale |
+| **SWEEP** | 🌊 = ordine su ≥2 exchange simultaneamente |
+| **ASK_HIT %** | ≥70% 🟢 buyer aggressivo · ≤30% 🔴 vendita |
+| **🐋 DAYS** | Giorni distinti nello storico — ≥2 = accumulo |
+| **VOI** | Volume / OI — >1 = soldi freschi |
+| **DTE** | Giorni alla scadenza |
 
 ---
 
 ## ⚠️ Note Operative
-
-- Questo tool è uno **screener di primo livello**. L'analisi finale va completata su IBKR (grafico, contesto macro, greche).
-- Il flusso di opzioni anticipa spesso il movimento del sottostante di 1–5 giorni, ma non è infallibile.
-- La combinazione più forte: **VOI alto + ASK_HIT ≥55% + SWEEP 🌊 + 🐋 DAYS ≥2**
-- Paper trading consigliato per le prime settimane: 1–2 operazioni al giorno con note su entry, razionale e risultato.
-- Nessun ordine viene eseguito automaticamente. Il controllo finale è sempre tuo.
+- Combinazione più forte: **VOI alto + ASK_HIT ≥55% + SWEEP 🌊 + 🐋 DAYS ≥2**
+- Paper trading consigliato per le prime settimane.
+- Nessun ordine viene eseguito automaticamente.
 """)
 
 # =========================
-# STORICO — VISUALIZZAZIONE
+# STORICO
 # =========================
 with st.expander("📅 Storico Scansioni — Tracker Accumulo 🐋"):
     history = load_history()
@@ -1020,7 +936,6 @@ with st.expander("📅 Storico Scansioni — Tracker Accumulo 🐋"):
             .sort_values("giorni", ascending=False)
         )
         df_agg["ultimo_flow"] = df_agg["ultimo_flow"].apply(format_k)
-        # Pulizia valori che arrivano come stringhe da Google Sheets
         def clean_strike(v):
             try:
                 f = float(v)
@@ -1029,7 +944,7 @@ with st.expander("📅 Storico Scansioni — Tracker Accumulo 🐋"):
         def clean_voi(v):
             try: return f"{float(v):.2f}"
             except: return str(v)
-        df_agg["strike"]    = df_agg["strike"].apply(clean_strike)
+        df_agg["strike"]     = df_agg["strike"].apply(clean_strike)
         df_agg["ultimo_voi"] = df_agg["ultimo_voi"].apply(clean_voi)
         df_agg.columns = ["Ticker","Strike","Scadenza","Tipo","🐋 Giorni","Ultimo Flow","Ultimo VOI","Ultima Data"]
 
@@ -1058,7 +973,7 @@ with st.expander("📅 Storico Scansioni — Tracker Accumulo 🐋"):
                         pass
                 if os.path.exists("scan_history.json"):
                     os.remove("scan_history.json")
-                st.success("Storico cancellato da Google Sheets ✅")
+                st.success("Storico cancellato ✅")
                 st.rerun()
 
 # =========================
@@ -1066,7 +981,6 @@ with st.expander("📅 Storico Scansioni — Tracker Accumulo 🐋"):
 # =========================
 with st.expander("⭐ Watchlist — Monitora contratti specifici"):
     wl = load_watchlist()
-
     st.markdown("**Aggiungi contratto da monitorare:**")
     wl_col1, wl_col2, wl_col3, wl_col4, wl_col5 = st.columns([2,1,2,1,2])
     with wl_col1:
@@ -1102,7 +1016,6 @@ with st.expander("⭐ Watchlist — Monitora contratti specifici"):
                 ctype  = entry.get("type","")
                 note   = entry.get("note","")
                 added  = entry.get("added","")
-
                 underlying = get_stock_price(t)
                 if underlying is None:
                     wl_results.append({"Ticker":t,"Contratto":f"{t} {exp} {strike}{ctype}",
@@ -1187,34 +1100,28 @@ if st.button("🚀 Scansiona mercato", type="primary", use_container_width=True)
 
         if send_telegram:
             telegram_text += f"🔥 <b>TOP FLOW — {ticker}</b> [{mode}]\n\n"
-            for _, row in top.iterrows():
-                greeks_line = ""
-                if row.get("delta") is not None:
-                    greeks_line = f"Δ {row['delta']}  Γ {row['gamma']}  Θ {row['theta']}  V {row['vega']}\n"
+            for _, row in top.head(3).iterrows():  # max 3 per ticker per Telegram
                 ask_hit_val = row.get("ASK_HIT")
                 sweep_val   = row.get("SWEEP", "")
                 whale_days  = row.get("🐋 DAYS", 0)
-                hit_line, whale_line = "", ""
+                hit_emoji   = ""
                 if ask_hit_val is not None:
                     hit_emoji = "🟢" if ask_hit_val>=70 else ("🔴" if ask_hit_val<=30 else "🟡")
-                    hit_line  = f"Ask Hit: {hit_emoji} <b>{ask_hit_val:.0f}%</b>  {sweep_val}\n"
-                if whale_days >= 2:
-                    whale_line = f"🐋 Accumulo: <b>{whale_days} giorni</b>\n"
-                score_val = row.get("SCORE","")
-                earn_val  = row.get("EARN","")
-                voi_anom  = row.get("VOI_ANOM","")
-                earn_line = f"⚠️ Earnings: <b>{earn_val}</b>\n" if earn_val else ""
-                anom_line = f"VOI: {voi_anom}\n" if voi_anom else ""
                 telegram_text += (
-                    f"{score_val}  {row['SIG']}  {row['BIAS']}\n"
+                    f"{row.get('SCORE','')}  {row['SIG']}  {row['BIAS']}\n"
                     f"<b>{row['OPZIONE']}</b>\n"
-                    f"Underlying: ${row['UNDER']}  |  Mid: ${row['MID']}\n"
-                    f"Flow: <b>{row['FLOW $']}</b>  |  VOI: {row['VOI']}\n"
-                    f"{hit_line}{whale_line}{earn_line}{anom_line}{greeks_line}\n"
+                    f"Mid: ${row['MID']}  VOI: {row['VOI']}  Vol: {row['volume']}\n"
+                    f"Flow: <b>{row['FLOW $']}</b>"
                 )
+                if ask_hit_val is not None:
+                    telegram_text += f"  Ask Hit: {hit_emoji}{ask_hit_val:.0f}%"
+                if sweep_val:
+                    telegram_text += f"  {sweep_val}"
+                if whale_days >= 2:
+                    telegram_text += f"  🐋{whale_days}d"
+                telegram_text += "\n\n"
 
     if not final_df.empty:
-        # Salva dati essenziali in session_state (solo stringhe/numeri, no oggetti pandas)
         scan_records = []
         for _, r in final_df.iterrows():
             scan_records.append({
@@ -1229,7 +1136,6 @@ if st.button("🚀 Scansiona mercato", type="primary", use_container_width=True)
         st.session_state["scan_records"] = scan_records
         st.success(f"✅ Trovate {len(final_df)} opportunità totali")
 
-        # Colonne principali — griglia snella senza ~bid/~ask/~SPREAD
         display_cols = [
             "SCORE", "SIG", "FLOW $", "CLUSTER", "BIAS", "SWEEP", "🐋 DAYS",
             "OPZIONE", "UNDER", "MID", "volume", "OI", "VOI", "VOI_ANOM", "DTE", "IV",
@@ -1237,8 +1143,8 @@ if st.button("🚀 Scansiona mercato", type="primary", use_container_width=True)
         ]
         display_cols = [c for c in display_cols if c in final_df.columns]
 
-        greeks_cols = ["OPZIONE", "delta", "gamma", "theta", "vega", "~bid", "~ask", "~SPREAD"]
         final_df = final_df.rename(columns={"bid": "~bid", "ask": "~ask", "SPREAD": "~SPREAD"})
+        greeks_cols = ["OPZIONE", "delta", "gamma", "theta", "vega", "~bid", "~ask", "~SPREAD"]
         greeks_cols = [c for c in greeks_cols if c in final_df.columns]
 
         def hl_score(val):
@@ -1294,18 +1200,17 @@ if st.button("🚀 Scansiona mercato", type="primary", use_container_width=True)
 
         styled = (
             final_df[display_cols].reset_index(drop=True).style
-            .map(hl_score,    subset=["SCORE"]     if "SCORE"    in final_df.columns else [])
+            .map(hl_score,    subset=["SCORE"]    if "SCORE"    in final_df.columns else [])
             .map(hl_sig,      subset=["SIG"])
-            .map(hl_ask,      subset=["ASK_HIT"]   if "ASK_HIT"  in final_df.columns else [])
-            .map(hl_sweep,    subset=["SWEEP"]      if "SWEEP"    in final_df.columns else [])
-            .map(hl_whale,    subset=["🐋 DAYS"]    if "🐋 DAYS"  in final_df.columns else [])
-            .map(hl_earn,     subset=["EARN"]       if "EARN"     in final_df.columns else [])
-            .map(hl_voi_anom, subset=["VOI_ANOM"]   if "VOI_ANOM" in final_df.columns else [])
+            .map(hl_ask,      subset=["ASK_HIT"]  if "ASK_HIT"  in final_df.columns else [])
+            .map(hl_sweep,    subset=["SWEEP"]     if "SWEEP"    in final_df.columns else [])
+            .map(hl_whale,    subset=["🐋 DAYS"]   if "🐋 DAYS"  in final_df.columns else [])
+            .map(hl_earn,     subset=["EARN"]      if "EARN"     in final_df.columns else [])
+            .map(hl_voi_anom, subset=["VOI_ANOM"]  if "VOI_ANOM" in final_df.columns else [])
             .format(fmt, na_rep="—")
         )
         st.dataframe(styled, use_container_width=True, hide_index=True)
 
-        # Expander Greeks separato
         with st.expander("📐 Dettaglio Greeks & Prezzi stimati"):
             fmt_greeks = {
                 "delta":   lambda x: f"{x:.3f}"   if pd.notna(x) else "—",
@@ -1317,11 +1222,10 @@ if st.button("🚀 Scansiona mercato", type="primary", use_container_width=True)
                 "~SPREAD": lambda x: f"~${x:.2f}" if pd.notna(x) else "—",
             }
             st.dataframe(
-                final_df[greeks_cols].reset_index(drop=True)
-                .style.format(fmt_greeks, na_rep="—"),
+                final_df[greeks_cols].reset_index(drop=True).style.format(fmt_greeks, na_rep="—"),
                 use_container_width=True, hide_index=True
             )
-            st.caption("~bid / ~ask / ~SPREAD = stime da MID ±1.5% (piano Options Starter — quote live richiedono piano Advanced)")
+            st.caption("~bid / ~ask / ~SPREAD = stime da MID ±1.5% (quote live richiedono piano Advanced)")
 
         if send_telegram and telegram_text:
             ok = send_telegram_message(telegram_text)
@@ -1333,7 +1237,7 @@ if st.button("🚀 Scansiona mercato", type="primary", use_container_width=True)
         st.warning("⚠️ Nessuna opportunità trovata. Prova ad allargare i filtri.")
 
 # =========================
-# AGGIUNGI A WATCHLIST — persiste tra rerun
+# AGGIUNGI A WATCHLIST
 # =========================
 if st.session_state.get("scan_records"):
     with st.expander("⭐ Aggiungi alla Watchlist", expanded=True):
@@ -1363,5 +1267,5 @@ st.divider()
 st.caption(
     "⚠️ Questo tool è uno screener di primo livello. "
     "L'analisi finale (grafico, contesto macro, greche) va completata su IBKR. "
-    "Nessun ordine viene eseguito automaticamente. — v5.0"
+    "Nessun ordine viene eseguito automaticamente. — v5.1"
 )
