@@ -1275,7 +1275,7 @@ use_container_width=True, hide_index=True
 st.caption("~bid / ~ask / ~SPREAD = stime da MID ±1.5% (quote live richiedono piano Advanced)")
 
 if send_telegram and telegram_text:
-ok = send_telegram_message(telegram_text)
+    ok = send_telegram_message(telegram_text)
 if ok:
 st.success("📲 Alert Telegram inviato!")
 else:
