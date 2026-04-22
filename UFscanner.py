@@ -1285,12 +1285,12 @@ if send_telegram and telegram_text:
 # =========================
 if st.session_state.get("scan_records"):
     with st.expander("⭐ Aggiungi alla Watchlist", expanded=True):
-opzioni = [r["OPZIONE"] for r in st.session_state["scan_records"]]
-sel = st.multiselect("Seleziona opzioni da aggiungere:", options=opzioni, key="wl_multisel")
+       opzioni = [r["OPZIONE"] for r in st.session_state["scan_records"]]
+       sel = st.multiselect("Seleziona opzioni da aggiungere:", options=opzioni, key="wl_multisel")
 if st.button("➕ Aggiungi alla Watchlist", key="wl_add_btn", type="secondary"):
     added = 0
 for opzione in sel:
-rec = next((r for r in st.session_state["scan_records"] if r["OPZIONE"]==opzione), None)
+    rec = next((r for r in st.session_state["scan_records"] if r["OPZIONE"]==opzione), None)
 if rec:
     type_wl = "C" if rec["type"] == "CALL" else "P"
     note_wl = f"Flow {rec['flow']} | VOI {rec['voi']}"
