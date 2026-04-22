@@ -1276,8 +1276,8 @@ st.caption("~bid / ~ask / ~SPREAD = stime da MID ±1.5% (quote live richiedono p
 
 if send_telegram and telegram_text:
     ok = send_telegram_message(telegram_text)
-if ok:
-st.success("📲 Alert Telegram inviato!")
+    if ok:
+        st.success("📲 Alert Telegram inviato!")
 else:
 st.error("❌ Errore invio Telegram")
 else:
