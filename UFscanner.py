@@ -1240,6 +1240,22 @@ if st.button("🚀 Scansiona mercato", type="primary", use_container_width=True)
             .map(hl_voi_anom, subset=["VOI_ANOM"]  if "VOI_ANOM" in final_df.columns else [])
             .format(fmt, na_rep="—")
         )
+# ==========================================
+# PATCH 2: CALCOLO SCORE (CHIRURGICO)
+# ==========================================
+if not final_df.empty:
+    # Creiamo la colonna SCORE usando la funzione della Patch 1
+    final_df['SCORE'] = final_df.apply(calculate_whale_score, axis=1)
+    
+    # Portiamo lo SCORE come primissima colonna a sinistra
+    cols = final_df.columns.tolist()
+    if 'SCORE' in cols:
+        cols.insert(0, cols.pop(cols.index('SCORE')))
+        final_df = final_df[cols]
+    
+    # Aggiorniamo l'oggetto 'styled' per includere la nuova colonna
+    styled = final_df.style.map(hl_whale, subset=["🕒 Giorni"])
+# ==========================================
         st.dataframe(styled, use_container_width=True, hide_index=True)
 
         with st.expander("📐 Dettaglio Greeks & Prezzi stimati"):
