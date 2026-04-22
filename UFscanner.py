@@ -48,6 +48,34 @@ def get_sheet(sheet_name: str):
     except Exception as e:
         st.warning(f"⚠️ Foglio '{sheet_name}' non trovato: {e}")
         return None
+        def calculate_whale_score(row):
+    score = 0
+    try:
+        if float(row.get('voi', 0)) >= 1.0: score += 1
+        if float(row.get('ask_hit_val', 0)) >= 70: score += 1
+        if row.get('flow') == 'SWEEP': score += 1
+        if float(row.get('premium', 0)) >= 100000: score += 1
+        price = float(row.get('underlying_price', 0))
+        strike = float(row.get('strike', 0))
+        if price > 0:
+            dist = abs(strike - price) / price
+            if 0.02 <= dist <= 0.15: score += 1
+    except:
+        pass
+    return "⭐" * score if score > 0 else "💤"
+
+async def get_ask_hit_value(session, symbol, api_key):
+    url = f"https://api.polygon.io/v2/last/nbbo/{symbol}?apiKey={api_key}"
+    try:
+        async with session.get(url, timeout=5) as response:
+            if response.status == 200:
+                data = await response.json()
+                res = data.get("results", {})
+                if not res: return 50.0
+                return 100.0 if (res.get('p', 0) >= res.get('ap', 0) and res.get('ap', 0) > 0) else 0.0
+    except:
+        return 50.0
+    return 50.0
 
 # =========================
 # CONFIG UI
