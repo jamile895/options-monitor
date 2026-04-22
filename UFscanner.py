@@ -1278,10 +1278,10 @@ if send_telegram and telegram_text:
     ok = send_telegram_message(telegram_text)
     if ok:
         st.success("📲 Alert Telegram inviato!")
-else:
-st.error("❌ Errore invio Telegram")
-else:
-st.warning("⚠️ Nessuna opportunità trovata. Prova ad allargare i filtri.")
+    else:
+        st.error("❌ Errore invio Telegram")
+    else:
+        st.warning("⚠️ Nessuna opportunità trovata. Prova ad allargare i filtri.")
 
 # =========================
 # AGGIUNGI A WATCHLIST
