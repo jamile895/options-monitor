@@ -1259,60 +1259,60 @@ if not final_df.empty:
 st.dataframe(styled, use_container_width=True, hide_index=True)
 
 with st.expander("📐 Dettaglio Greeks & Prezzi stimati"):
-            fmt_greeks = {
-                "delta":   lambda x: f"{x:.3f}"   if pd.notna(x) else "—",
-                "gamma":   lambda x: f"{x:.4f}"   if pd.notna(x) else "—",
-                "theta":   lambda x: f"{x:.3f}"   if pd.notna(x) else "—",
-                "vega":    lambda x: f"{x:.3f}"   if pd.notna(x) else "—",
-                "~bid":    lambda x: f"~${x:.2f}" if pd.notna(x) else "—",
-                "~ask":    lambda x: f"~${x:.2f}" if pd.notna(x) else "—",
-                "~SPREAD": lambda x: f"~${x:.2f}" if pd.notna(x) else "—",
-            }
-            st.dataframe(
-                final_df[greeks_cols].reset_index(drop=True).style.format(fmt_greeks, na_rep="—"),
-                use_container_width=True, hide_index=True
-            )
-            st.caption("~bid / ~ask / ~SPREAD = stime da MID ±1.5% (quote live richiedono piano Advanced)")
+fmt_greeks = {
+"delta":   lambda x: f"{x:.3f}"   if pd.notna(x) else "—",
+"gamma":   lambda x: f"{x:.4f}"   if pd.notna(x) else "—",
+"theta":   lambda x: f"{x:.3f}"   if pd.notna(x) else "—",
+"vega":    lambda x: f"{x:.3f}"   if pd.notna(x) else "—",
+"~bid":    lambda x: f"~${x:.2f}" if pd.notna(x) else "—",
+"~ask":    lambda x: f"~${x:.2f}" if pd.notna(x) else "—",
+"~SPREAD": lambda x: f"~${x:.2f}" if pd.notna(x) else "—",
+}
+st.dataframe(
+final_df[greeks_cols].reset_index(drop=True).style.format(fmt_greeks, na_rep="—"),
+use_container_width=True, hide_index=True
+)
+st.caption("~bid / ~ask / ~SPREAD = stime da MID ±1.5% (quote live richiedono piano Advanced)")
 
-        if send_telegram and telegram_text:
-            ok = send_telegram_message(telegram_text)
-            if ok:
-                st.success("📲 Alert Telegram inviato!")
-            else:
-                st.error("❌ Errore invio Telegram")
-    else:
-        st.warning("⚠️ Nessuna opportunità trovata. Prova ad allargare i filtri.")
+if send_telegram and telegram_text:
+ok = send_telegram_message(telegram_text)
+if ok:
+st.success("📲 Alert Telegram inviato!")
+else:
+st.error("❌ Errore invio Telegram")
+else:
+st.warning("⚠️ Nessuna opportunità trovata. Prova ad allargare i filtri.")
 
 # =========================
 # AGGIUNGI A WATCHLIST
 # =========================
 if st.session_state.get("scan_records"):
-    with st.expander("⭐ Aggiungi alla Watchlist", expanded=True):
-        opzioni = [r["OPZIONE"] for r in st.session_state["scan_records"]]
-        sel = st.multiselect("Seleziona opzioni da aggiungere:", options=opzioni, key="wl_multisel")
-        if st.button("➕ Aggiungi alla Watchlist", key="wl_add_btn", type="secondary"):
-            added = 0
-            for opzione in sel:
-                rec = next((r for r in st.session_state["scan_records"] if r["OPZIONE"]==opzione), None)
-                if rec:
-                    type_wl = "C" if rec["type"] == "CALL" else "P"
-                    note_wl = f"Flow {rec['flow']} | VOI {rec['voi']}"
-                    ok = add_to_watchlist(rec["ticker"], rec["strike"], rec["exp_str"], type_wl, note_wl)
-                    if ok: added += 1
-            if added > 0:
-                st.success(f"✅ {added} contratt{'o' if added==1 else 'i'} aggiunt{'o' if added==1 else 'i'}!")
-                st.balloons()
-            elif not sel:
-                st.warning("⚠️ Seleziona almeno un'opzione.")
-            else:
-                st.info("ℹ️ Già in watchlist.")
+with st.expander("⭐ Aggiungi alla Watchlist", expanded=True):
+opzioni = [r["OPZIONE"] for r in st.session_state["scan_records"]]
+sel = st.multiselect("Seleziona opzioni da aggiungere:", options=opzioni, key="wl_multisel")
+if st.button("➕ Aggiungi alla Watchlist", key="wl_add_btn", type="secondary"):
+added = 0
+for opzione in sel:
+rec = next((r for r in st.session_state["scan_records"] if r["OPZIONE"]==opzione), None)
+if rec:
+type_wl = "C" if rec["type"] == "CALL" else "P"
+note_wl = f"Flow {rec['flow']} | VOI {rec['voi']}"
+ok = add_to_watchlist(rec["ticker"], rec["strike"], rec["exp_str"], type_wl, note_wl)
+if ok: added += 1
+if added > 0:
+st.success(f"✅ {added} contratt{'o' if added==1 else 'i'} aggiunt{'o' if added==1 else 'i'}!")
+st.balloons()
+elif not sel:
+st.warning("⚠️ Seleziona almeno un'opzione.")
+else:
+st.info("ℹ️ Già in watchlist.")
 
 # =========================
 # FOOTER
 # =========================
 st.divider()
 st.caption(
-    "⚠️ Questo tool è uno screener di primo livello. "
-    "L'analisi finale (grafico, contesto macro, greche) va completata su IBKR. "
-    "Nessun ordine viene eseguito automaticamente. — v5.1"
+"⚠️ Questo tool è uno screener di primo livello. "
+"L'analisi finale (grafico, contesto macro, greche) va completata su IBKR. "
+"Nessun ordine viene eseguito automaticamente. — v5.1"
 )
