@@ -1267,5 +1267,5 @@ st.divider()
 st.caption(
     "⚠️ Questo tool è uno screener di primo livello. "
     "L'analisi finale (grafico, contesto macro, greche) va completata su IBKR. "
-    "Nessun ordine viene eseguito automaticamente. — v5.1"
+    "Nessun ordine viene eseguito automaticamente. — v5.2"
 )
