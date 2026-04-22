@@ -48,9 +48,9 @@ def get_sheet(sheet_name: str):
     except Exception as e:
         st.warning(f"⚠️ Foglio '{sheet_name}' non trovato: {e}")
         return None
-        def calculate_whale_score(row):
-    score = 0
-    try:
+def calculate_whale_score(row):
+    score = 0    
+    try:    
         if float(row.get('voi', 0)) >= 1.0: score += 1
         if float(row.get('ask_hit_val', 0)) >= 70: score += 1
         if row.get('flow') == 'SWEEP': score += 1
