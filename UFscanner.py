@@ -1256,9 +1256,9 @@ if not final_df.empty:
     # Aggiorniamo l'oggetto 'styled' per includere la nuova colonna
     styled = final_df.style.map(hl_whale, subset=["🕒 Giorni"])
 # ==========================================
-        st.dataframe(styled, use_container_width=True, hide_index=True)
+st.dataframe(styled, use_container_width=True, hide_index=True)
 
-        with st.expander("📐 Dettaglio Greeks & Prezzi stimati"):
+with st.expander("📐 Dettaglio Greeks & Prezzi stimati"):
             fmt_greeks = {
                 "delta":   lambda x: f"{x:.3f}"   if pd.notna(x) else "—",
                 "gamma":   lambda x: f"{x:.4f}"   if pd.notna(x) else "—",
