@@ -1259,14 +1259,14 @@ if not final_df.empty:
 st.dataframe(styled, use_container_width=True, hide_index=True)
 
 with st.expander("📐 Dettaglio Greeks & Prezzi stimati"):
-fmt_greeks = {
-"delta":   lambda x: f"{x:.3f}"   if pd.notna(x) else "—",
-"gamma":   lambda x: f"{x:.4f}"   if pd.notna(x) else "—",
-"theta":   lambda x: f"{x:.3f}"   if pd.notna(x) else "—",
-"vega":    lambda x: f"{x:.3f}"   if pd.notna(x) else "—",
-"~bid":    lambda x: f"~${x:.2f}" if pd.notna(x) else "—",
-"~ask":    lambda x: f"~${x:.2f}" if pd.notna(x) else "—",
-"~SPREAD": lambda x: f"~${x:.2f}" if pd.notna(x) else "—",
+    fmt_greeks = {    
+        "delta":   lambda x: f"{x:.3f}"   if pd.notna(x) else "—",
+        "gamma":   lambda x: f"{x:.4f}"   if pd.notna(x) else "—",
+        "theta":   lambda x: f"{x:.3f}"   if pd.notna(x) else "—",
+        "vega":    lambda x: f"{x:.3f}"   if pd.notna(x) else "—",
+        "~bid":    lambda x: f"~${x:.2f}" if pd.notna(x) else "—",
+        "~ask":    lambda x: f"~${x:.2f}" if pd.notna(x) else "—",
+        "~SPREAD": lambda x: f"~${x:.2f}" if pd.notna(x) else "—",
 }
 st.dataframe(
 final_df[greeks_cols].reset_index(drop=True).style.format(fmt_greeks, na_rep="—"),
