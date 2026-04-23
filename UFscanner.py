@@ -470,7 +470,7 @@ PRESETS = {
 preset = PRESETS[mode]
 st.caption(f"ℹ️ {preset['desc']}")
 
-APP_VERSION = "5.8"
+APP_VERSION = "5.9"
 if ("last_mode" not in st.session_state or
     st.session_state.get("last_mode") != mode or
     st.session_state.get("app_version") != APP_VERSION):
@@ -899,7 +899,7 @@ def scan_ticker(ticker: str) -> pd.DataFrame:
 # =========================
 # LEGENDA / MANUALE IN-APP
 # =========================
-with st.expander("📖 Manuale — Options Flow Scanner PRO v5.8"):
+with st.expander("📖 Manuale — Options Flow Scanner PRO v5.9"):
     st.markdown("""
 ## 🎯 Obiettivo del Tool
 Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volumi anomali rispetto all'open interest, con focus su **smart money** e **accumulo balena**. Nessuna esecuzione automatica — il controllo finale è sempre tuo.
@@ -1095,27 +1095,30 @@ if st.button("🚀 Scansiona mercato", type="primary", use_container_width=True)
         final_df = pd.concat([final_df, top], ignore_index=True)
 
         if send_telegram:
-            telegram_text += f"🔥 TOP FLOW — {ticker} [{mode}]\n\n"
-            for _, row in top.head(3).iterrows():
-                ask_hit_val = row.get("ASK_HIT")
-                sweep_val   = row.get("SWEEP", "")
-                whale_days  = row.get("🐋 DAYS", 0)
-                hit_emoji   = ""
-                if ask_hit_val is not None:
-                    hit_emoji = "🟢" if ask_hit_val>=70 else ("🔴" if ask_hit_val<=30 else "🟡")
-                telegram_text += (
-                    f"{row.get('SCORE','')}  {row['SIG']}  {row['BIAS']}\n"
-                    f"{row['OPZIONE']}\n"
-                    f"Mid: ${row['MID']}  VOI: {row['VOI']}  Vol: {row['volume']}\n"
-                    f"Flow: {row['FLOW $']}"
-                )
-                if ask_hit_val is not None:
-                    telegram_text += f"  Ask Hit: {hit_emoji}{ask_hit_val:.0f}%"
-                if sweep_val:
-                    telegram_text += f"  {sweep_val}"
-                if whale_days >= 2:
-                    telegram_text += f"  🐋{whale_days}d"
-                telegram_text += "\n\n"
+            # Solo GO e HOLD — niente STOP
+            top_filtered = top[top["SIG"].str.contains("GO|HOLD", na=False)]
+            if not top_filtered.empty:
+                telegram_text += f"🔥 TOP FLOW — {ticker} [{mode}]\n\n"
+                for _, row in top_filtered.head(3).iterrows():
+                    ask_hit_val = row.get("ASK_HIT")
+                    sweep_val   = row.get("SWEEP", "")
+                    whale_days  = row.get("🐋 DAYS", 0)
+                    hit_emoji   = ""
+                    if ask_hit_val is not None:
+                        hit_emoji = "🟢" if ask_hit_val>=70 else ("🔴" if ask_hit_val<=30 else "🟡")
+                    telegram_text += (
+                        f"{row.get('SCORE','')}  {row['SIG']}  {row['BIAS']}\n"
+                        f"{row['OPZIONE']}\n"
+                        f"Mid: ${row['MID']}  VOI: {row['VOI']}  Vol: {row['volume']}\n"
+                        f"Flow: {row['FLOW $']}"
+                    )
+                    if ask_hit_val is not None:
+                        telegram_text += f"  Ask Hit: {hit_emoji}{ask_hit_val:.0f}%"
+                    if sweep_val:
+                        telegram_text += f"  {sweep_val}"
+                    if whale_days >= 2:
+                        telegram_text += f"  🐋{whale_days}d"
+                    telegram_text += "\n\n"
 
     if not final_df.empty:
         if send_telegram and telegram_text:
@@ -1289,5 +1292,5 @@ st.divider()
 st.caption(
     "⚠️ Questo tool è uno screener di primo livello. "
     "L'analisi finale (grafico, contesto macro, greche) va completata su IBKR. "
-    "Nessun ordine viene eseguito automaticamente. — v5.8"
+    "Nessun ordine viene eseguito automaticamente. — v5.9"
 )
