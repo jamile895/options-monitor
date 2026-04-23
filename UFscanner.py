@@ -434,47 +434,47 @@ mode = st.radio(
 
 PRESETS = {
     "SMALL CAP": {
-        "volume_min": 100, "voi_min": 1.5, "dte_max": 60, "dte_min": 2,
+        "volume_min": 100, "voi_min": 1.5, "dte_max": 245, "dte_min": 45,
         "strike_dist_min": 0, "strike_dist_max": 20, "spread_max": 20.0,
         "delta_min": 0.05, "delta_max": 0.95, "ask_hit_min": 0.0, "flow_min": 0,
         "desc": "Small Cap (<$2B) — bassa liquidità, filtri adattati"
     },
     "MID CAP": {
-        "volume_min": 200, "voi_min": 1.2, "dte_max": 90, "dte_min": 2,
+        "volume_min": 200, "voi_min": 1.2, "dte_max": 245, "dte_min": 45,
         "strike_dist_min": 0, "strike_dist_max": 15, "spread_max": 20.0,
         "delta_min": 0.10, "delta_max": 0.90, "ask_hit_min": 0.0, "flow_min": 0,
         "desc": "Mid Cap ($2B-$10B) — bilanciato tra liquidità e segnale"
     },
     "BIG CAP": {
-        "volume_min": 500, "voi_min": 1.0, "dte_max": 120, "dte_min": 1,
+        "volume_min": 500, "voi_min": 1.0, "dte_max": 245, "dte_min": 45,
         "strike_dist_min": 0, "strike_dist_max": 12, "spread_max": 20.0,
         "delta_min": 0.10, "delta_max": 0.90, "ask_hit_min": 0.0, "flow_min": 0,
         "desc": "Big Cap (>$10B) — alta liquidità, filtri standard"
     },
     "SNIPER": {
-        "volume_min": 1000, "voi_min": 2.0, "dte_max": 14, "dte_min": 1,
+        "volume_min": 1000, "voi_min": 2.0, "dte_max": 245, "dte_min": 45,
         "strike_dist_min": 0, "strike_dist_max": 5, "spread_max": 20.0,
         "delta_min": 0.20, "delta_max": 0.80, "ask_hit_min": 55.0, "flow_min": 0,
         "desc": "SNIPER — strike vicino, scadenza breve, alta pressione"
     },
     "HOT ONLY": {
-        "volume_min": 2000, "voi_min": 3.0, "dte_max": 7, "dte_min": 1,
+        "volume_min": 2000, "voi_min": 3.0, "dte_max": 245, "dte_min": 45,
         "strike_dist_min": 0, "strike_dist_max": 3, "spread_max": 20.0,
         "delta_min": 0.25, "delta_max": 0.75, "ask_hit_min": 60.0, "flow_min": 0,
         "desc": "HOT ONLY — solo flussi anomali estremi, scadenza imminente"
     },
     "SPY SWING": {
-        "volume_min": 100, "voi_min": 0.5, "dte_max": 210, "dte_min": 60,
+        "volume_min": 100, "voi_min": 0.5, "dte_max": 245, "dte_min": 45,
         "strike_dist_min": 0, "strike_dist_max": 15, "spread_max": 20.0,
         "delta_min": 0.05, "delta_max": 0.80, "ask_hit_min": 0.0, "flow_min": 50000,
-        "desc": "SPY SWING — DTE 60-210gg | Flow >$50K | Allarga i filtri, poi stringi manualmente"
+        "desc": "SPY SWING — DTE 45-245gg | Flow >$50K | Allarga i filtri, poi stringi manualmente"
     },
 }
 
 preset = PRESETS[mode]
 st.caption(f"ℹ️ {preset['desc']}")
 
-APP_VERSION = "5.2"
+APP_VERSION = "5.3"
 if ("last_mode" not in st.session_state or
     st.session_state.get("last_mode") != mode or
     st.session_state.get("app_version") != APP_VERSION):
@@ -492,27 +492,96 @@ if ("last_mode" not in st.session_state or
     st.session_state["ask_hit_min"]     = float(preset["ask_hit_min"])
     st.session_state["flow_min"]        = int(preset["flow_min"])
 
+# Helper funzione per label wide/narrow
+def width_label(val, min_val, max_val, invert=False):
+    """Mostra indicatore WIDE/NARROW con colore in base al valore dello slider."""
+    if max_val == min_val: return ""
+    pct = (val - min_val) / (max_val - min_val)
+    if invert: pct = 1 - pct
+    if pct >= 0.7:   return "🟢 WIDE"
+    elif pct >= 0.4: return "🟡 MED"
+    else:            return "🔴 NARROW"
+
+def dte_label(dmin, dmax):
+    span = dmax - dmin
+    if span >= 150: return "🟢 WIDE"
+    elif span >= 60: return "🟡 MED"
+    else:            return "🔴 NARROW"
+
+# === RIGA 1: VOLUME e VOI ===
 col_s1, col_s2 = st.columns(2)
 with col_s1:
-    volume_min      = st.slider("Volume minimo (contratti)",  0,     50000,   st.session_state["volume_min"],               key="volume_min")
-    voi_min         = st.slider("VOI minimo (vol/OI)",        0.0,   20.0,    st.session_state["voi_min"],    step=0.1,     key="voi_min")
-    dte_min         = st.slider("DTE minimo (giorni)",        0,     180,     st.session_state["dte_min"],                  key="dte_min")
-    dte_max         = st.slider("DTE massimo (giorni)",       1,     365,     st.session_state["dte_max"],                  key="dte_max")
-    strike_dist_min = st.slider("Distanza strike % minima",   0,     30,      st.session_state["strike_dist_min"],          key="strike_dist_min",
-                                help="Esclude ITM e ATM. Es: 5 = considera solo contratti OTM oltre il 5%")
+    vol_lbl = width_label(st.session_state["volume_min"], 0, 50000, invert=True)
+    volume_min = st.slider(f"Volume minimo (contratti) {vol_lbl}", 0, 50000,
+                           st.session_state["volume_min"], key="volume_min")
 with col_s2:
-    strike_dist_max = st.slider("Distanza strike % massima",  1,     50,      st.session_state["strike_dist_max"],          key="strike_dist_max")
-    spread_max      = st.slider("Spread bid/ask max ($)",     0.01,  20.0,    st.session_state["spread_max"],  step=0.01,   key="spread_max")
-    delta_min       = st.slider("Delta minimo",               0.0,   1.0,     st.session_state["delta_min"],   step=0.01,   key="delta_min")
-    delta_max       = st.slider("Delta massimo",              0.0,   1.0,     st.session_state["delta_max"],   step=0.01,   key="delta_max")
-    flow_min        = st.slider("Flow $ minimo (smart money)",0,     5000000, st.session_state["flow_min"],    step=50000,  key="flow_min",
-                                help=">$500K = istituzionale. >$1M = whale.")
+    voi_lbl = width_label(st.session_state["voi_min"], 0.0, 20.0, invert=True)
+    voi_min = st.slider(f"VOI minimo (vol/OI) {voi_lbl}", 0.0, 20.0,
+                        st.session_state["voi_min"], step=0.1, key="voi_min")
 
+# === RIGA 2: DTE min e max vicini ===
+st.markdown("---")
+dte_lbl = dte_label(st.session_state["dte_min"], st.session_state["dte_max"])
+st.markdown(f"**📅 Finestra DTE (giorni alla scadenza) {dte_lbl}**")
+col_dte1, col_dte2 = st.columns(2)
+with col_dte1:
+    dte_min = st.slider("DTE minimo", 0, 365, st.session_state["dte_min"], key="dte_min")
+with col_dte2:
+    dte_max = st.slider("DTE massimo", 1, 365, st.session_state["dte_max"], key="dte_max")
+
+# === RIGA 3: DISTANZA STRIKE min e max vicini ===
+st.markdown("---")
+strike_span = st.session_state["strike_dist_max"] - st.session_state["strike_dist_min"]
+if strike_span >= 15:   sk_lbl = "🟢 WIDE"
+elif strike_span >= 7:  sk_lbl = "🟡 MED"
+else:                   sk_lbl = "🔴 NARROW"
+st.markdown(f"**🎯 Distanza Strike % {sk_lbl}**")
+col_sk1, col_sk2 = st.columns(2)
+with col_sk1:
+    strike_dist_min = st.slider("Strike % minima", 0, 30, st.session_state["strike_dist_min"],
+                                key="strike_dist_min",
+                                help="Esclude ITM e ATM. Es: 5 = solo OTM oltre il 5%")
+with col_sk2:
+    strike_dist_max = st.slider("Strike % massima", 1, 50, st.session_state["strike_dist_max"],
+                                key="strike_dist_max")
+
+# === RIGA 4: DELTA min e max vicini ===
+st.markdown("---")
+delta_span = st.session_state["delta_max"] - st.session_state["delta_min"]
+if delta_span >= 0.6:   dl_lbl = "🟢 WIDE"
+elif delta_span >= 0.3: dl_lbl = "🟡 MED"
+else:                   dl_lbl = "🔴 NARROW"
+st.markdown(f"**Δ Delta range {dl_lbl}** — (0.05–0.25 = OTM speculativo · 0.40–0.60 = ATM · 0.70–0.95 = ITM)**")
+col_d1, col_d2 = st.columns(2)
+with col_d1:
+    delta_min = st.slider("Delta minimo (0.05=OTM · 0.50=ATM · 0.90=ITM)", 0.0, 1.0,
+                          st.session_state["delta_min"], step=0.01, key="delta_min")
+with col_d2:
+    delta_max = st.slider("Delta massimo (0.05=OTM · 0.50=ATM · 0.90=ITM)", 0.0, 1.0,
+                          st.session_state["delta_max"], step=0.01, key="delta_max")
+
+# === RIGA 5: SPREAD e FLOW ===
+st.markdown("---")
+col_s3, col_s4 = st.columns(2)
+with col_s3:
+    spread_lbl = width_label(st.session_state["spread_max"], 0.01, 20.0)
+    spread_max = st.slider(f"Spread bid/ask max ($) {spread_lbl}", 0.01, 20.0,
+                           st.session_state["spread_max"], step=0.01, key="spread_max")
+with col_s4:
+    flow_lbl = width_label(st.session_state["flow_min"], 0, 5000000, invert=True)
+    flow_min = st.slider(f"Flow $ minimo {flow_lbl}", 0, 5000000,
+                         st.session_state["flow_min"], step=50000, key="flow_min",
+                         help=">$500K = istituzionale. >$1M = whale.")
+
+# === ASK HIT ===
+st.markdown("---")
+ask_hit_lbl = width_label(st.session_state["ask_hit_min"], 0.0, 100.0, invert=True)
 ask_hit_min = st.slider(
-    "Ask Hit % minimo (0 = mostra tutto)",
+    f"Ask Hit % minimo (0 = mostra tutto) {ask_hit_lbl}",
     0.0, 100.0, st.session_state["ask_hit_min"], step=5.0, key="ask_hit_min",
-    help="≥55% = buyer aggressivo. ≤30% = seller. 30-55% = neutro."
+    help="≥55% = buyer aggressivo. ≤30% = seller."
 )
+st.markdown("---")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -1270,5 +1339,5 @@ st.divider()
 st.caption(
     "⚠️ Questo tool è uno screener di primo livello. "
     "L'analisi finale (grafico, contesto macro, greche) va completata su IBKR. "
-    "Nessun ordine viene eseguito automaticamente. — v5.1"
+    "Nessun ordine viene eseguito automaticamente. — v5.3"
 )
