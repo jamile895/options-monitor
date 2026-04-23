@@ -470,7 +470,7 @@ PRESETS = {
 preset = PRESETS[mode]
 st.caption(f"ℹ️ {preset['desc']}")
 
-APP_VERSION = "6.0"
+APP_VERSION = "6.1"
 if ("last_mode" not in st.session_state or
     st.session_state.get("last_mode") != mode or
     st.session_state.get("app_version") != APP_VERSION):
@@ -623,6 +623,25 @@ def get_stock_price(ticker: str) -> float | None:
         if r2.status_code == 200:
             res = r2.json().get("results", [])
             if res: return round(float(res[0]["c"]), 2)
+    except Exception:
+        pass
+    return None
+
+@st.cache_data(ttl=300, show_spinner=False)
+def get_dark_pool_pct(ticker: str) -> float | None:
+    """Recupera Dark Pool % dal snapshot stocks di Polygon."""
+    try:
+        url = f"https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers/{ticker}"
+        r = requests.get(url, params={"apiKey": POLYGON_API_KEY}, timeout=8)
+        if r.status_code == 200:
+            data = r.json().get("ticker", {})
+            day = data.get("day", {})
+            total_vol  = day.get("v") or 0
+            otc_vol    = day.get("otcVolume") or 0
+            # Polygon chiama il volume dark/OTC come otcVolume o darkVolume
+            dark_vol   = day.get("darkVolume") or otc_vol or 0
+            if total_vol > 0 and dark_vol > 0:
+                return round((dark_vol / total_vol) * 100, 1)
     except Exception:
         pass
     return None
@@ -872,7 +891,13 @@ def scan_ticker(ticker: str) -> pd.DataFrame:
     cv = df.attrs.get("calls_vol", 0)
     pv = df.attrs.get("puts_vol", 0)
     bias_label = "📈 BULLISH" if pc < 0.8 else ("📉 BEARISH" if pc > 1.2 else "⚖️ NEUTRO")
-    st.caption(f"Put/Call Ratio: **{pc}** | CALL vol: {cv:,} | PUT vol: {pv:,} | Bias: {bias_label}")
+    dp_pct = get_dark_pool_pct(ticker)
+    dp_str = ""
+    if dp_pct is not None:
+        if dp_pct >= 50:   dp_str = f"  |  🔵🔵 Dark Pool: **{dp_pct}%** (accumulo forte)"
+        elif dp_pct >= 30: dp_str = f"  |  🔵 Dark Pool: **{dp_pct}%** (accumulo istituzionale)"
+        else:              dp_str = f"  |  Dark Pool: {dp_pct}%"
+    st.caption(f"Put/Call Ratio: **{pc}** | CALL vol: {cv:,} | PUT vol: {pv:,} | Bias: {bias_label}{dp_str}")
     df_enriched = enrich_with_flow_data(df, ticker, top_n=15)
     if not df_enriched.empty:
         sentiment_df = compute_strike_sentiment(df)
@@ -907,7 +932,7 @@ def scan_ticker(ticker: str) -> pd.DataFrame:
 # =========================
 # LEGENDA / MANUALE IN-APP
 # =========================
-with st.expander("📖 Manuale — Options Flow Scanner PRO v6.0"):
+with st.expander("📖 Manuale — Options Flow Scanner PRO v6.1"):
     st.markdown("""
 ## 🎯 Obiettivo del Tool
 Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volumi anomali rispetto all'open interest, con focus su **smart money** e **accumulo balena**. Nessuna esecuzione automatica — il controllo finale è sempre tuo.
@@ -924,6 +949,7 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
 | **VOI** | Volume / OI — >1 = soldi freschi |
 | **DTE** | Giorni alla scadenza |
 | **GEX_M** | Gamma Exposure in $M · 🟢 positivo = dealer frena · 🔴 negativo = dealer amplifica |
+| **Dark Pool %** | % volume fuori mercato · >30% 🔵 accumulo istituzionale · >50% 🔵🔵 segnale forte |
 | **Delta** | 0.05–0.25=OTM speculativo · 0.40–0.60=ATM · 0.70–0.95=ITM |
 
 ## ⚠️ Note Operative
@@ -1347,5 +1373,5 @@ st.divider()
 st.caption(
     "⚠️ Questo tool è uno screener di primo livello. "
     "L'analisi finale (grafico, contesto macro, greche) va completata su IBKR. "
-    "Nessun ordine viene eseguito automaticamente. — v6.0"
+    "Nessun ordine viene eseguito automaticamente. — v6.1"
 )
