@@ -470,7 +470,7 @@ PRESETS = {
 preset = PRESETS[mode]
 st.caption(f"ℹ️ {preset['desc']}")
 
-APP_VERSION = "5.6"
+APP_VERSION = "5.7"
 if ("last_mode" not in st.session_state or
     st.session_state.get("last_mode") != mode or
     st.session_state.get("app_version") != APP_VERSION):
@@ -899,7 +899,7 @@ def scan_ticker(ticker: str) -> pd.DataFrame:
 # =========================
 # LEGENDA / MANUALE IN-APP
 # =========================
-with st.expander("📖 Manuale — Options Flow Scanner PRO v5.6"):
+with st.expander("📖 Manuale — Options Flow Scanner PRO v5.7"):
     st.markdown("""
 ## 🎯 Obiettivo del Tool
 Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volumi anomali rispetto all'open interest, con focus su **smart money** e **accumulo balena**. Nessuna esecuzione automatica — il controllo finale è sempre tuo.
@@ -1075,10 +1075,146 @@ with st.expander("⭐ Watchlist — Monitora contratti specifici"):
         st.info("Nessun contratto in watchlist. Aggiungine uno sopra.")
 
 # =========================
+# MOSTRA RISULTATI PERSISTENTI (dopo rerun da watchlist)
+# =========================
+def _show_results(final_df, scan_records):
+    """Funzione riutilizzabile per mostrare la griglia risultati."""
+    display_cols = [
+        "SCORE", "SIG", "FLOW $", "CLUSTER", "BIAS", "SWEEP", "🐋 DAYS",
+        "OPZIONE", "UNDER", "MID", "volume", "OI", "VOI", "VOI_ANOM", "DTE", "IV",
+        "ASK_HIT", "EARN", "ITM", "ATM", "OTM",
+    ]
+    display_cols = [c for c in display_cols if c in final_df.columns]
+
+    _df = final_df.copy()
+    if "bid" in _df.columns:    _df = _df.rename(columns={"bid": "~bid"})
+    if "ask" in _df.columns:    _df = _df.rename(columns={"ask": "~ask"})
+    if "SPREAD" in _df.columns: _df = _df.rename(columns={"SPREAD": "~SPREAD"})
+    greeks_cols = ["OPZIONE", "delta", "gamma", "theta", "vega", "~bid", "~ask", "~SPREAD"]
+    greeks_cols = [c for c in greeks_cols if c in _df.columns]
+
+    def hl_score(val):
+        try:
+            v = int(str(val).split()[-1])
+            if v >= 75: return "background-color:#0a2a0a; color:#00ff44; font-weight:bold"
+            if v >= 50: return "background-color:#1a2a00; color:#aaff00; font-weight:bold"
+            if v >= 30: return "background-color:#2a2a00; color:#ffdd00"
+            return "background-color:#1a1a1a; color:#888888"
+        except: return ""
+    def hl_earn(val):
+        if val and "⚠️" in str(val): return "background-color:#3a1a00; color:#ffaa00"
+        return ""
+    def hl_voi_anom(val):
+        s = str(val)
+        if "🚀" in s: return "background-color:#0a1a3a; color:#00aaff; font-weight:bold"
+        if "📈" in s: return "background-color:#0a2a1a; color:#00ff88"
+        if "📉" in s: return "background-color:#2a0a0a; color:#ff6666"
+        return ""
+    def hl_sig(val):
+        if "GO"   in str(val): return "background-color:#1a3a1a; color:#00ff88"
+        if "HOLD" in str(val): return "background-color:#3a3a0a; color:#ffdd00"
+        if "STOP" in str(val): return "background-color:#3a0a0a; color:#ff4444"
+        return ""
+    def hl_ask(val):
+        try:
+            v = float(val)
+            if v >= 70: return "background-color:#1a3a1a; color:#00ff88"
+            if v <= 30: return "background-color:#3a0a0a; color:#ff4444"
+            return "background-color:#3a3a0a; color:#ffdd00"
+        except: return ""
+    def hl_sweep(val):
+        return "background-color:#1a1a3a; color:#88aaff" if val=="🌊" else ""
+    def hl_whale(val):
+        try:
+            v = int(val)
+            if v >= 3: return "background-color:#1a1a3a; color:#88aaff"
+            if v >= 2: return "background-color:#1a3a1a; color:#00ff88"
+        except: pass
+        return ""
+
+    fmt = {
+        "UNDER":   lambda x: f"${x:.2f}"        if pd.notna(x) else "—",
+        "MID":     lambda x: f"${x:.2f}"        if pd.notna(x) else "—",
+        "VOI":     lambda x: f"{float(x):.2f}"  if pd.notna(x) else "—",
+        "ASK_HIT": lambda x: f"{float(x):.0f}%" if pd.notna(x) else "—",
+        "IV":      lambda x: f"{x:.1f}%"        if pd.notna(x) else "—",
+        "delta":   lambda x: f"{x:.3f}"         if pd.notna(x) else "—",
+        "gamma":   lambda x: f"{x:.4f}"         if pd.notna(x) else "—",
+        "theta":   lambda x: f"{x:.3f}"         if pd.notna(x) else "—",
+        "vega":    lambda x: f"{x:.3f}"         if pd.notna(x) else "—",
+    }
+
+    styled = (
+        _df[display_cols].reset_index(drop=True).style
+        .map(hl_score,    subset=["SCORE"]    if "SCORE"    in _df.columns else [])
+        .map(hl_sig,      subset=["SIG"])
+        .map(hl_ask,      subset=["ASK_HIT"]  if "ASK_HIT"  in _df.columns else [])
+        .map(hl_sweep,    subset=["SWEEP"]     if "SWEEP"    in _df.columns else [])
+        .map(hl_whale,    subset=["🐋 DAYS"]   if "🐋 DAYS"  in _df.columns else [])
+        .map(hl_earn,     subset=["EARN"]      if "EARN"     in _df.columns else [])
+        .map(hl_voi_anom, subset=["VOI_ANOM"]  if "VOI_ANOM" in _df.columns else [])
+        .format(fmt, na_rep="—")
+    )
+    st.dataframe(styled, use_container_width=True, hide_index=True)
+
+    with st.expander("📐 Dettaglio Greeks & Prezzi stimati"):
+        fmt_greeks = {
+            "delta":   lambda x: f"{x:.3f}"   if pd.notna(x) else "—",
+            "gamma":   lambda x: f"{x:.4f}"   if pd.notna(x) else "—",
+            "theta":   lambda x: f"{x:.3f}"   if pd.notna(x) else "—",
+            "vega":    lambda x: f"{x:.3f}"   if pd.notna(x) else "—",
+            "~bid":    lambda x: f"~${x:.2f}" if pd.notna(x) else "—",
+            "~ask":    lambda x: f"~${x:.2f}" if pd.notna(x) else "—",
+            "~SPREAD": lambda x: f"~${x:.2f}" if pd.notna(x) else "—",
+        }
+        st.dataframe(
+            _df[greeks_cols].reset_index(drop=True).style.format(fmt_greeks, na_rep="—"),
+            use_container_width=True, hide_index=True
+        )
+        st.caption("~bid / ~ask / ~SPREAD = stime da MID ±1.5% (quote live richiedono piano Advanced)")
+
+    # Aggiungi a Watchlist
+    st.markdown("---")
+    st.markdown("### ⭐ Aggiungi alla Watchlist")
+    opzioni = [r["OPZIONE"] for r in scan_records]
+    sel = st.multiselect("Seleziona opzioni da aggiungere:", options=opzioni, key="wl_multisel")
+    if st.button("➕ Aggiungi selezionate alla Watchlist", key="wl_add_btn", type="secondary"):
+        added = 0
+        already = 0
+        for opzione in sel:
+            rec = next((r for r in scan_records if r["OPZIONE"]==opzione), None)
+            if rec:
+                type_wl = "C" if rec["type"] == "CALL" else "P"
+                note_wl = f"Flow {rec['flow']} | VOI {rec['voi']}"
+                ok = add_to_watchlist(rec["ticker"], rec["strike"], rec["exp_str"], type_wl, note_wl)
+                if ok: added += 1
+                else:  already += 1
+        if not sel:
+            st.warning("⚠️ Seleziona almeno un'opzione.")
+        elif added > 0:
+            msg = f"✅ {added} contratt{'o' if added==1 else 'i'} aggiunt{'o' if added==1 else 'i'}!"
+            if already > 0: msg += f" ({already} già in watchlist)"
+            st.success(msg)
+        else:
+            st.info("ℹ️ Tutti già in watchlist.")
+
+# Mostra risultati persistenti se esistono (dopo rerun da watchlist)
+if "final_df_json" in st.session_state and "scan_records" in st.session_state:
+    try:
+        _persisted_df = pd.read_json(st.session_state["final_df_json"])
+        if not _persisted_df.empty:
+            st.success(f"✅ {len(_persisted_df)} opportunità — premi 🚀 per aggiornare")
+            _show_results(_persisted_df, st.session_state["scan_records"])
+    except Exception:
+        pass
+
+# =========================
 # SCAN BUTTON + RISULTATI + AGGIUNGI WATCHLIST
-# Tutto in un unico blocco per evitare rerun che fa sparire la tabella
 # =========================
 if st.button("🚀 Scansiona mercato", type="primary", use_container_width=True):
+    # Reset risultati precedenti
+    st.session_state.pop("final_df_json", None)
+    st.session_state.pop("scan_records", None)
     tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
     if not tickers:
         st.error("Inserisci almeno un ticker.")
@@ -1129,98 +1265,15 @@ if st.button("🚀 Scansiona mercato", type="primary", use_container_width=True)
                 "voi":      str(r.get("VOI", "")),
             })
 
+        # Salva in session_state per persistere dopo rerun
+        st.session_state["scan_records"]  = scan_records
+        st.session_state["final_df_cols"] = display_cols if "display_cols" in dir() else []
+        try:
+            st.session_state["final_df_json"] = final_df.to_json(date_format="iso")
+        except Exception:
+            pass
+
         st.success(f"✅ Trovate {len(final_df)} opportunità totali")
-
-        display_cols = [
-            "SCORE", "SIG", "FLOW $", "CLUSTER", "BIAS", "SWEEP", "🐋 DAYS",
-            "OPZIONE", "UNDER", "MID", "volume", "OI", "VOI", "VOI_ANOM", "DTE", "IV",
-            "ASK_HIT", "EARN", "ITM", "ATM", "OTM",
-        ]
-        display_cols = [c for c in display_cols if c in final_df.columns]
-
-        final_df = final_df.rename(columns={"bid": "~bid", "ask": "~ask", "SPREAD": "~SPREAD"})
-        greeks_cols = ["OPZIONE", "delta", "gamma", "theta", "vega", "~bid", "~ask", "~SPREAD"]
-        greeks_cols = [c for c in greeks_cols if c in final_df.columns]
-
-        def hl_score(val):
-            try:
-                v = int(str(val).split()[-1])
-                if v >= 75: return "background-color:#0a2a0a; color:#00ff44; font-weight:bold"
-                if v >= 50: return "background-color:#1a2a00; color:#aaff00; font-weight:bold"
-                if v >= 30: return "background-color:#2a2a00; color:#ffdd00"
-                return "background-color:#1a1a1a; color:#888888"
-            except: return ""
-        def hl_earn(val):
-            if val and "⚠️" in str(val): return "background-color:#3a1a00; color:#ffaa00"
-            return ""
-        def hl_voi_anom(val):
-            s = str(val)
-            if "🚀" in s: return "background-color:#0a1a3a; color:#00aaff; font-weight:bold"
-            if "📈" in s: return "background-color:#0a2a1a; color:#00ff88"
-            if "📉" in s: return "background-color:#2a0a0a; color:#ff6666"
-            return ""
-        def hl_sig(val):
-            if "GO"   in str(val): return "background-color:#1a3a1a; color:#00ff88"
-            if "HOLD" in str(val): return "background-color:#3a3a0a; color:#ffdd00"
-            if "STOP" in str(val): return "background-color:#3a0a0a; color:#ff4444"
-            return ""
-        def hl_ask(val):
-            try:
-                v = float(val)
-                if v >= 70: return "background-color:#1a3a1a; color:#00ff88"
-                if v <= 30: return "background-color:#3a0a0a; color:#ff4444"
-                return "background-color:#3a3a0a; color:#ffdd00"
-            except: return ""
-        def hl_sweep(val):
-            return "background-color:#1a1a3a; color:#88aaff" if val=="🌊" else ""
-        def hl_whale(val):
-            try:
-                v = int(val)
-                if v >= 3: return "background-color:#1a1a3a; color:#88aaff"
-                if v >= 2: return "background-color:#1a3a1a; color:#00ff88"
-            except: pass
-            return ""
-
-        fmt = {
-            "UNDER":   lambda x: f"${x:.2f}"        if pd.notna(x) else "—",
-            "MID":     lambda x: f"${x:.2f}"        if pd.notna(x) else "—",
-            "VOI":     lambda x: f"{float(x):.2f}"  if pd.notna(x) else "—",
-            "ASK_HIT": lambda x: f"{float(x):.0f}%" if pd.notna(x) else "—",
-            "IV":      lambda x: f"{x:.1f}%"        if pd.notna(x) else "—",
-            "delta":   lambda x: f"{x:.3f}"         if pd.notna(x) else "—",
-            "gamma":   lambda x: f"{x:.4f}"         if pd.notna(x) else "—",
-            "theta":   lambda x: f"{x:.3f}"         if pd.notna(x) else "—",
-            "vega":    lambda x: f"{x:.3f}"         if pd.notna(x) else "—",
-        }
-
-        styled = (
-            final_df[display_cols].reset_index(drop=True).style
-            .map(hl_score,    subset=["SCORE"]    if "SCORE"    in final_df.columns else [])
-            .map(hl_sig,      subset=["SIG"])
-            .map(hl_ask,      subset=["ASK_HIT"]  if "ASK_HIT"  in final_df.columns else [])
-            .map(hl_sweep,    subset=["SWEEP"]     if "SWEEP"    in final_df.columns else [])
-            .map(hl_whale,    subset=["🐋 DAYS"]   if "🐋 DAYS"  in final_df.columns else [])
-            .map(hl_earn,     subset=["EARN"]      if "EARN"     in final_df.columns else [])
-            .map(hl_voi_anom, subset=["VOI_ANOM"]  if "VOI_ANOM" in final_df.columns else [])
-            .format(fmt, na_rep="—")
-        )
-        st.dataframe(styled, use_container_width=True, hide_index=True)
-
-        with st.expander("📐 Dettaglio Greeks & Prezzi stimati"):
-            fmt_greeks = {
-                "delta":   lambda x: f"{x:.3f}"   if pd.notna(x) else "—",
-                "gamma":   lambda x: f"{x:.4f}"   if pd.notna(x) else "—",
-                "theta":   lambda x: f"{x:.3f}"   if pd.notna(x) else "—",
-                "vega":    lambda x: f"{x:.3f}"   if pd.notna(x) else "—",
-                "~bid":    lambda x: f"~${x:.2f}" if pd.notna(x) else "—",
-                "~ask":    lambda x: f"~${x:.2f}" if pd.notna(x) else "—",
-                "~SPREAD": lambda x: f"~${x:.2f}" if pd.notna(x) else "—",
-            }
-            st.dataframe(
-                final_df[greeks_cols].reset_index(drop=True).style.format(fmt_greeks, na_rep="—"),
-                use_container_width=True, hide_index=True
-            )
-            st.caption("~bid / ~ask / ~SPREAD = stime da MID ±1.5% (quote live richiedono piano Advanced)")
 
         if send_telegram and telegram_text:
             ok = send_telegram_message(telegram_text)
@@ -1229,36 +1282,12 @@ if st.button("🚀 Scansiona mercato", type="primary", use_container_width=True)
             else:
                 st.error("❌ Errore invio Telegram")
 
-        # =========================
-        # AGGIUNGI A WATCHLIST — dentro il blocco scan, nessun rerun
-        # =========================
-        st.markdown("---")
-        st.markdown("### ⭐ Aggiungi alla Watchlist")
-        opzioni = [r["OPZIONE"] for r in scan_records]
-        sel = st.multiselect("Seleziona opzioni da aggiungere:", options=opzioni, key="wl_multisel")
-        if st.button("➕ Aggiungi selezionate alla Watchlist", key="wl_add_btn", type="secondary"):
-            added = 0
-            already = 0
-            for opzione in sel:
-                rec = next((r for r in scan_records if r["OPZIONE"]==opzione), None)
-                if rec:
-                    type_wl = "C" if rec["type"] == "CALL" else "P"
-                    note_wl = f"Flow {rec['flow']} | VOI {rec['voi']}"
-                    ok = add_to_watchlist(rec["ticker"], rec["strike"], rec["exp_str"], type_wl, note_wl)
-                    if ok: added += 1
-                    else:  already += 1
-            if not sel:
-                st.warning("⚠️ Seleziona almeno un'opzione.")
-            elif added > 0:
-                msg = f"✅ {added} contratt{'o' if added==1 else 'i'} aggiunt{'o' if added==1 else 'i'}!"
-                if already > 0: msg += f" ({already} già in watchlist)"
-                st.success(msg)
-                # NESSUN st.rerun() — la tabella rimane visibile!
-            else:
-                st.info("ℹ️ Tutti già in watchlist.")
+        _show_results(final_df, scan_records)
 
     else:
         st.warning("⚠️ Nessuna opportunità trovata. Prova ad allargare i filtri.")
+        st.session_state.pop("final_df_json", None)
+        st.session_state.pop("scan_records", None)
 
 # =========================
 # FOOTER
@@ -1267,5 +1296,5 @@ st.divider()
 st.caption(
     "⚠️ Questo tool è uno screener di primo livello. "
     "L'analisi finale (grafico, contesto macro, greche) va completata su IBKR. "
-    "Nessun ordine viene eseguito automaticamente. — v5.6"
+    "Nessun ordine viene eseguito automaticamente. — v5.7"
 )
