@@ -470,7 +470,7 @@ PRESETS = {
 preset = PRESETS[mode]
 st.caption(f"ℹ️ {preset['desc']}")
 
-APP_VERSION = "5.9"
+APP_VERSION = "6.0"
 if ("last_mode" not in st.session_state or
     st.session_state.get("last_mode") != mode or
     st.session_state.get("app_version") != APP_VERSION):
@@ -742,6 +742,14 @@ def parse_and_filter(raw: list[dict], underlying: float, ticker: str) -> pd.Data
     df["DIST_STRIKE"]    = ((df["strike"] - underlying).abs() / underlying * 100).round(1)
     df["UNDER"]          = underlying
     df["FLOW_POWER_NUM"] = (df["volume"] * df["MID"]).round(0)
+
+    # GEX = gamma × OI × 100 × underlying²  (in migliaia $)
+    # CALL contribuisce positivamente, PUT negativamente
+    def calc_gex(row):
+        if row["gamma"] is None or row["gamma"] == 0: return 0
+        sign = 1 if row["type"] == "CALL" else -1
+        return sign * row["gamma"] * row["OI"] * 100 * (underlying ** 2) / 1_000_000
+    df["GEX_M"] = df.apply(calc_gex, axis=1).round(2)
     df = df[df["volume"]         >= volume_min]
     df = df[df["VOI"]            >= voi_min]
     df = df[df["DTE"]            >= dte_min]
@@ -899,7 +907,7 @@ def scan_ticker(ticker: str) -> pd.DataFrame:
 # =========================
 # LEGENDA / MANUALE IN-APP
 # =========================
-with st.expander("📖 Manuale — Options Flow Scanner PRO v5.9"):
+with st.expander("📖 Manuale — Options Flow Scanner PRO v6.0"):
     st.markdown("""
 ## 🎯 Obiettivo del Tool
 Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volumi anomali rispetto all'open interest, con focus su **smart money** e **accumulo balena**. Nessuna esecuzione automatica — il controllo finale è sempre tuo.
@@ -915,6 +923,7 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
 | **🐋 DAYS** | Giorni distinti nello storico — ≥2 = accumulo |
 | **VOI** | Volume / OI — >1 = soldi freschi |
 | **DTE** | Giorni alla scadenza |
+| **GEX_M** | Gamma Exposure in $M · 🟢 positivo = dealer frena · 🔴 negativo = dealer amplifica |
 | **Delta** | 0.05–0.25=OTM speculativo · 0.40–0.60=ATM · 0.70–0.95=ITM |
 
 ## ⚠️ Note Operative
@@ -1159,7 +1168,7 @@ if st.session_state.get("saved_records"):
     display_cols = [
         "SCORE", "SIG", "FLOW $", "CLUSTER", "BIAS", "SWEEP", "🐋 DAYS",
         "OPZIONE", "UNDER", "MID", "volume", "OI", "VOI", "VOI_ANOM", "DTE", "IV",
-        "ASK_HIT", "EARN", "ITM", "ATM", "OTM",
+        "GEX_M", "ASK_HIT", "EARN", "ITM", "ATM", "OTM",
     ]
     display_cols = [c for c in display_cols if c in df_show.columns]
 
@@ -1202,12 +1211,21 @@ if st.session_state.get("saved_records"):
         except: pass
         return ""
 
+    def hl_gex(val):
+        try:
+            v = float(val)
+            if v >= 1.0:  return "background-color:#1a3a1a; color:#00ff88"   # verde = dealer frena
+            if v <= -1.0: return "background-color:#3a0a0a; color:#ff4444"   # rosso = dealer amplifica
+            return ""
+        except: return ""
+
     fmt = {
         "UNDER":   lambda x: f"${x:.2f}"        if pd.notna(x) else "—",
         "MID":     lambda x: f"${x:.2f}"        if pd.notna(x) else "—",
         "VOI":     lambda x: f"{float(x):.2f}"  if pd.notna(x) else "—",
         "ASK_HIT": lambda x: f"{float(x):.0f}%" if pd.notna(x) else "—",
         "IV":      lambda x: f"{x:.1f}%"        if pd.notna(x) else "—",
+        "GEX_M":   lambda x: f"{x:+.2f}M"       if pd.notna(x) and x != 0 else "—",
         "delta":   lambda x: f"{x:.3f}"         if pd.notna(x) else "—",
         "gamma":   lambda x: f"{x:.4f}"         if pd.notna(x) else "—",
         "theta":   lambda x: f"{x:.3f}"         if pd.notna(x) else "—",
@@ -1223,9 +1241,46 @@ if st.session_state.get("saved_records"):
         .map(hl_whale,    subset=["🐋 DAYS"]   if "🐋 DAYS"  in df_show.columns else [])
         .map(hl_earn,     subset=["EARN"]      if "EARN"     in df_show.columns else [])
         .map(hl_voi_anom, subset=["VOI_ANOM"]  if "VOI_ANOM" in df_show.columns else [])
+        .map(hl_gex,      subset=["GEX_M"]     if "GEX_M"    in df_show.columns else [])
         .format(fmt, na_rep="—")
     )
     st.dataframe(styled, use_container_width=True, hide_index=True)
+
+    # GEX Summary per strike
+    if "GEX_M" in df_show.columns and "strike" in df_show.columns:
+        with st.expander("⚡ GEX — Gamma Exposure per Strike", expanded=False):
+            st.markdown("""
+**Come leggere il GEX:**
+- 🟢 **GEX positivo** → dealer long gamma → frenano i movimenti → livello di supporto/resistenza
+- 🔴 **GEX negativo** → dealer short gamma → amplificano i movimenti → livello esplosivo
+- Più è alto in valore assoluto, più è significativo
+""")
+            gex_by_strike = (
+                df_show.groupby("strike")["GEX_M"]
+                .sum()
+                .reset_index()
+                .sort_values("GEX_M", ascending=False)
+                .rename(columns={"strike": "Strike", "GEX_M": "GEX Totale ($M)"})
+            )
+            gex_by_strike["Strike"] = gex_by_strike["Strike"].apply(
+                lambda x: str(int(x)) if x == int(x) else f"{x:.2f}"
+            )
+            gex_by_strike["GEX Totale ($M)"] = gex_by_strike["GEX Totale ($M)"].round(2)
+
+            def hl_gex_table(val):
+                try:
+                    v = float(val)
+                    if v >= 1.0:  return "background-color:#1a3a1a; color:#00ff88"
+                    if v <= -1.0: return "background-color:#3a0a0a; color:#ff4444"
+                except: pass
+                return ""
+
+            st.dataframe(
+                gex_by_strike.style
+                .map(hl_gex_table, subset=["GEX Totale ($M)"])
+                .format({"GEX Totale ($M)": lambda x: f"{x:+.2f}M"}),
+                use_container_width=True, hide_index=True
+            )
 
     # Greeks expander
     df_greeks = df_show.copy()
@@ -1292,5 +1347,5 @@ st.divider()
 st.caption(
     "⚠️ Questo tool è uno screener di primo livello. "
     "L'analisi finale (grafico, contesto macro, greche) va completata su IBKR. "
-    "Nessun ordine viene eseguito automaticamente. — v5.9"
+    "Nessun ordine viene eseguito automaticamente. — v6.0"
 )
