@@ -470,7 +470,7 @@ PRESETS = {
 preset = PRESETS[mode]
 st.caption(f"ℹ️ {preset['desc']}")
 
-APP_VERSION = "5.7"
+APP_VERSION = "5.8"
 if ("last_mode" not in st.session_state or
     st.session_state.get("last_mode") != mode or
     st.session_state.get("app_version") != APP_VERSION):
@@ -899,7 +899,7 @@ def scan_ticker(ticker: str) -> pd.DataFrame:
 # =========================
 # LEGENDA / MANUALE IN-APP
 # =========================
-with st.expander("📖 Manuale — Options Flow Scanner PRO v5.7"):
+with st.expander("📖 Manuale — Options Flow Scanner PRO v5.8"):
     st.markdown("""
 ## 🎯 Obiettivo del Tool
 Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volumi anomali rispetto all'open interest, con focus su **smart money** e **accumulo balena**. Nessuna esecuzione automatica — il controllo finale è sempre tuo.
@@ -1075,23 +1075,90 @@ with st.expander("⭐ Watchlist — Monitora contratti specifici"):
         st.info("Nessun contratto in watchlist. Aggiungine uno sopra.")
 
 # =========================
-# MOSTRA RISULTATI PERSISTENTI (dopo rerun da watchlist)
+# SCAN BUTTON
 # =========================
-def _show_results(final_df, scan_records):
-    """Funzione riutilizzabile per mostrare la griglia risultati."""
+if st.button("🚀 Scansiona mercato", type="primary", use_container_width=True):
+    tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
+    if not tickers:
+        st.error("Inserisci almeno un ticker.")
+        st.stop()
+
+    final_df, telegram_text = pd.DataFrame(), ""
+
+    for ticker in tickers:
+        st.markdown(f"### 🔍 {ticker}")
+        df = scan_ticker(ticker)
+        if df.empty:
+            st.info(f"Nessuna opportunità trovata per {ticker} con i filtri correnti.")
+            continue
+        top = df.head(10)
+        final_df = pd.concat([final_df, top], ignore_index=True)
+
+        if send_telegram:
+            telegram_text += f"🔥 TOP FLOW — {ticker} [{mode}]\n\n"
+            for _, row in top.head(3).iterrows():
+                ask_hit_val = row.get("ASK_HIT")
+                sweep_val   = row.get("SWEEP", "")
+                whale_days  = row.get("🐋 DAYS", 0)
+                hit_emoji   = ""
+                if ask_hit_val is not None:
+                    hit_emoji = "🟢" if ask_hit_val>=70 else ("🔴" if ask_hit_val<=30 else "🟡")
+                telegram_text += (
+                    f"{row.get('SCORE','')}  {row['SIG']}  {row['BIAS']}\n"
+                    f"{row['OPZIONE']}\n"
+                    f"Mid: ${row['MID']}  VOI: {row['VOI']}  Vol: {row['volume']}\n"
+                    f"Flow: {row['FLOW $']}"
+                )
+                if ask_hit_val is not None:
+                    telegram_text += f"  Ask Hit: {hit_emoji}{ask_hit_val:.0f}%"
+                if sweep_val:
+                    telegram_text += f"  {sweep_val}"
+                if whale_days >= 2:
+                    telegram_text += f"  🐋{whale_days}d"
+                telegram_text += "\n\n"
+
+    if not final_df.empty:
+        if send_telegram and telegram_text:
+            ok = send_telegram_message(telegram_text)
+            if ok:
+                st.success("📲 Alert Telegram inviato!")
+            else:
+                st.error("❌ Errore invio Telegram")
+
+        # Salva in session_state come lista di dict semplici
+        records = []
+        for _, r in final_df.iterrows():
+            rec = {}
+            for col in final_df.columns:
+                val = r[col]
+                try:
+                    if pd.isna(val): val = None
+                except: pass
+                if isinstance(val, (pd.Timestamp,)): val = str(val)
+                rec[col] = val
+            records.append(rec)
+        st.session_state["saved_records"] = records
+        st.session_state["saved_tickers"] = tickers
+
+    else:
+        st.warning("⚠️ Nessuna opportunità trovata. Prova ad allargare i filtri.")
+        st.session_state.pop("saved_records", None)
+
+# =========================
+# MOSTRA RISULTATI (persistenti tramite session_state)
+# =========================
+if st.session_state.get("saved_records"):
+    records = st.session_state["saved_records"]
+    df_show = pd.DataFrame(records)
+
+    st.success(f"✅ Trovate {len(df_show)} opportunità — premi 🚀 per aggiornare")
+
     display_cols = [
         "SCORE", "SIG", "FLOW $", "CLUSTER", "BIAS", "SWEEP", "🐋 DAYS",
         "OPZIONE", "UNDER", "MID", "volume", "OI", "VOI", "VOI_ANOM", "DTE", "IV",
         "ASK_HIT", "EARN", "ITM", "ATM", "OTM",
     ]
-    display_cols = [c for c in display_cols if c in final_df.columns]
-
-    _df = final_df.copy()
-    if "bid" in _df.columns:    _df = _df.rename(columns={"bid": "~bid"})
-    if "ask" in _df.columns:    _df = _df.rename(columns={"ask": "~ask"})
-    if "SPREAD" in _df.columns: _df = _df.rename(columns={"SPREAD": "~SPREAD"})
-    greeks_cols = ["OPZIONE", "delta", "gamma", "theta", "vega", "~bid", "~ask", "~SPREAD"]
-    greeks_cols = [c for c in greeks_cols if c in _df.columns]
+    display_cols = [c for c in display_cols if c in df_show.columns]
 
     def hl_score(val):
         try:
@@ -1145,18 +1212,25 @@ def _show_results(final_df, scan_records):
     }
 
     styled = (
-        _df[display_cols].reset_index(drop=True).style
-        .map(hl_score,    subset=["SCORE"]    if "SCORE"    in _df.columns else [])
+        df_show[display_cols].reset_index(drop=True).style
+        .map(hl_score,    subset=["SCORE"]    if "SCORE"    in df_show.columns else [])
         .map(hl_sig,      subset=["SIG"])
-        .map(hl_ask,      subset=["ASK_HIT"]  if "ASK_HIT"  in _df.columns else [])
-        .map(hl_sweep,    subset=["SWEEP"]     if "SWEEP"    in _df.columns else [])
-        .map(hl_whale,    subset=["🐋 DAYS"]   if "🐋 DAYS"  in _df.columns else [])
-        .map(hl_earn,     subset=["EARN"]      if "EARN"     in _df.columns else [])
-        .map(hl_voi_anom, subset=["VOI_ANOM"]  if "VOI_ANOM" in _df.columns else [])
+        .map(hl_ask,      subset=["ASK_HIT"]  if "ASK_HIT"  in df_show.columns else [])
+        .map(hl_sweep,    subset=["SWEEP"]     if "SWEEP"    in df_show.columns else [])
+        .map(hl_whale,    subset=["🐋 DAYS"]   if "🐋 DAYS"  in df_show.columns else [])
+        .map(hl_earn,     subset=["EARN"]      if "EARN"     in df_show.columns else [])
+        .map(hl_voi_anom, subset=["VOI_ANOM"]  if "VOI_ANOM" in df_show.columns else [])
         .format(fmt, na_rep="—")
     )
     st.dataframe(styled, use_container_width=True, hide_index=True)
 
+    # Greeks expander
+    df_greeks = df_show.copy()
+    if "bid" in df_greeks.columns:    df_greeks = df_greeks.rename(columns={"bid": "~bid"})
+    if "ask" in df_greeks.columns:    df_greeks = df_greeks.rename(columns={"ask": "~ask"})
+    if "SPREAD" in df_greeks.columns: df_greeks = df_greeks.rename(columns={"SPREAD": "~SPREAD"})
+    greeks_cols = ["OPZIONE", "delta", "gamma", "theta", "vega", "~bid", "~ask", "~SPREAD"]
+    greeks_cols = [c for c in greeks_cols if c in df_greeks.columns]
     with st.expander("📐 Dettaglio Greeks & Prezzi stimati"):
         fmt_greeks = {
             "delta":   lambda x: f"{x:.3f}"   if pd.notna(x) else "—",
@@ -1168,126 +1242,45 @@ def _show_results(final_df, scan_records):
             "~SPREAD": lambda x: f"~${x:.2f}" if pd.notna(x) else "—",
         }
         st.dataframe(
-            _df[greeks_cols].reset_index(drop=True).style.format(fmt_greeks, na_rep="—"),
+            df_greeks[greeks_cols].reset_index(drop=True).style.format(fmt_greeks, na_rep="—"),
             use_container_width=True, hide_index=True
         )
         st.caption("~bid / ~ask / ~SPREAD = stime da MID ±1.5% (quote live richiedono piano Advanced)")
 
-    # Aggiungi a Watchlist
+    # Aggiungi a Watchlist — DOPO la tabella, stessa pagina
     st.markdown("---")
     st.markdown("### ⭐ Aggiungi alla Watchlist")
-    opzioni = [r["OPZIONE"] for r in scan_records]
-    sel = st.multiselect("Seleziona opzioni da aggiungere:", options=opzioni, key="wl_multisel")
-    if st.button("➕ Aggiungi selezionate alla Watchlist", key="wl_add_btn", type="secondary"):
+    scan_records_wl = [
+        {"OPZIONE": str(r.get("OPZIONE","")),
+         "ticker":  str(r.get("OPZIONE","")).split()[0],
+         "strike":  float(r.get("strike", 0)) if r.get("strike") else 0,
+         "exp_str": str(r.get("exp_str","")),
+         "type":    str(r.get("type","")),
+         "flow":    str(r.get("FLOW $","")),
+         "voi":     str(r.get("VOI",""))}
+        for r in records
+    ]
+    opzioni_wl = [r["OPZIONE"] for r in scan_records_wl]
+    sel_wl = st.multiselect("Seleziona opzioni:", options=opzioni_wl, key="wl_multisel_persist")
+    if st.button("➕ Aggiungi alla Watchlist", key="wl_add_persist", type="secondary"):
         added = 0
         already = 0
-        for opzione in sel:
-            rec = next((r for r in scan_records if r["OPZIONE"]==opzione), None)
+        for opzione in sel_wl:
+            rec = next((r for r in scan_records_wl if r["OPZIONE"]==opzione), None)
             if rec:
                 type_wl = "C" if rec["type"] == "CALL" else "P"
                 note_wl = f"Flow {rec['flow']} | VOI {rec['voi']}"
                 ok = add_to_watchlist(rec["ticker"], rec["strike"], rec["exp_str"], type_wl, note_wl)
                 if ok: added += 1
                 else:  already += 1
-        if not sel:
+        if not sel_wl:
             st.warning("⚠️ Seleziona almeno un'opzione.")
         elif added > 0:
-            msg = f"✅ {added} contratt{'o' if added==1 else 'i'} aggiunt{'o' if added==1 else 'i'}!"
+            msg = f"✅ {added} aggiunt{'o' if added==1 else 'i'}!"
             if already > 0: msg += f" ({already} già in watchlist)"
             st.success(msg)
         else:
             st.info("ℹ️ Tutti già in watchlist.")
-
-# Mostra risultati persistenti se esistono (dopo rerun da watchlist)
-if "final_df_json" in st.session_state and "scan_records" in st.session_state:
-    try:
-        _persisted_df = pd.read_json(st.session_state["final_df_json"])
-        if not _persisted_df.empty:
-            st.success(f"✅ {len(_persisted_df)} opportunità — premi 🚀 per aggiornare")
-            _show_results(_persisted_df, st.session_state["scan_records"])
-    except Exception:
-        pass
-
-# =========================
-# SCAN BUTTON + RISULTATI + AGGIUNGI WATCHLIST
-# =========================
-if st.button("🚀 Scansiona mercato", type="primary", use_container_width=True):
-    # Reset risultati precedenti
-    st.session_state.pop("final_df_json", None)
-    st.session_state.pop("scan_records", None)
-    tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
-    if not tickers:
-        st.error("Inserisci almeno un ticker.")
-        st.stop()
-    final_df, telegram_text = pd.DataFrame(), ""
-    for ticker in tickers:
-        st.markdown(f"### 🔍 {ticker}")
-        df = scan_ticker(ticker)
-        if df.empty:
-            st.info(f"Nessuna opportunità trovata per {ticker} con i filtri correnti.")
-            continue
-        top = df.head(10)
-        final_df = pd.concat([final_df, top], ignore_index=True)
-        if send_telegram:
-            telegram_text += f"🔥 TOP FLOW — {ticker} [{mode}]\n\n"
-            for _, row in top.head(3).iterrows():
-                ask_hit_val = row.get("ASK_HIT")
-                sweep_val   = row.get("SWEEP", "")
-                whale_days  = row.get("🐋 DAYS", 0)
-                hit_emoji   = ""
-                if ask_hit_val is not None:
-                    hit_emoji = "🟢" if ask_hit_val>=70 else ("🔴" if ask_hit_val<=30 else "🟡")
-                telegram_text += (
-                    f"{row.get('SCORE','')}  {row['SIG']}  {row['BIAS']}\n"
-                    f"{row['OPZIONE']}\n"
-                    f"Mid: ${row['MID']}  VOI: {row['VOI']}  Vol: {row['volume']}\n"
-                    f"Flow: {row['FLOW $']}"
-                )
-                if ask_hit_val is not None:
-                    telegram_text += f"  Ask Hit: {hit_emoji}{ask_hit_val:.0f}%"
-                if sweep_val:
-                    telegram_text += f"  {sweep_val}"
-                if whale_days >= 2:
-                    telegram_text += f"  🐋{whale_days}d"
-                telegram_text += "\n\n"
-
-    if not final_df.empty:
-        # Salva records per watchlist
-        scan_records = []
-        for _, r in final_df.iterrows():
-            scan_records.append({
-                "OPZIONE":  str(r.get("OPZIONE", "")),
-                "ticker":   str(r.get("OPZIONE","")).split()[0],
-                "strike":   float(r.get("strike", 0)),
-                "exp_str":  str(r.get("exp_str", "")),
-                "type":     str(r.get("type", "")),
-                "flow":     str(r.get("FLOW $", "")),
-                "voi":      str(r.get("VOI", "")),
-            })
-
-        # Salva in session_state per persistere dopo rerun
-        st.session_state["scan_records"]  = scan_records
-        st.session_state["final_df_cols"] = display_cols if "display_cols" in dir() else []
-        try:
-            st.session_state["final_df_json"] = final_df.to_json(date_format="iso")
-        except Exception:
-            pass
-
-        st.success(f"✅ Trovate {len(final_df)} opportunità totali")
-
-        if send_telegram and telegram_text:
-            ok = send_telegram_message(telegram_text)
-            if ok:
-                st.success("📲 Alert Telegram inviato!")
-            else:
-                st.error("❌ Errore invio Telegram")
-
-        _show_results(final_df, scan_records)
-
-    else:
-        st.warning("⚠️ Nessuna opportunità trovata. Prova ad allargare i filtri.")
-        st.session_state.pop("final_df_json", None)
-        st.session_state.pop("scan_records", None)
 
 # =========================
 # FOOTER
@@ -1296,5 +1289,5 @@ st.divider()
 st.caption(
     "⚠️ Questo tool è uno screener di primo livello. "
     "L'analisi finale (grafico, contesto macro, greche) va completata su IBKR. "
-    "Nessun ordine viene eseguito automaticamente. — v5.7"
+    "Nessun ordine viene eseguito automaticamente. — v5.8"
 )
