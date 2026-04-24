@@ -470,7 +470,7 @@ PRESETS = {
 preset = PRESETS[mode]
 st.caption(f"ℹ️ {preset['desc']}")
 
-APP_VERSION = "6.1"
+APP_VERSION = "6.2"
 if ("last_mode" not in st.session_state or
     st.session_state.get("last_mode") != mode or
     st.session_state.get("app_version") != APP_VERSION):
@@ -626,6 +626,45 @@ def get_stock_price(ticker: str) -> float | None:
     except Exception:
         pass
     return None
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_short_interest(ticker: str) -> dict:
+    """
+    Recupera Short Interest e Days to Cover da Polygon.
+    Ritorna dict con: short_pct, days_to_cover, short_shares
+    """
+    result = {"short_pct": None, "days_to_cover": None, "short_shares": None}
+    try:
+        # Polygon short interest endpoint
+        url = f"https://api.polygon.io/v2/reference/financials/{ticker}"
+        r = requests.get(url, params={"apiKey": POLYGON_API_KEY, "limit": 1}, timeout=8)
+        if r.status_code == 200:
+            data = r.json().get("results", [])
+            if data:
+                fi = data[0]
+                short_shares = fi.get("short_interest")
+                float_shares = fi.get("float_shares") or fi.get("shares_outstanding")
+                avg_volume   = fi.get("average_daily_volume")
+                if short_shares and float_shares and float_shares > 0:
+                    result["short_pct"] = round((short_shares / float_shares) * 100, 1)
+                    result["short_shares"] = int(short_shares)
+                if short_shares and avg_volume and avg_volume > 0:
+                    result["days_to_cover"] = round(short_shares / avg_volume, 1)
+                return result
+    except Exception:
+        pass
+    try:
+        # Fallback: snapshot con short interest
+        url2 = f"https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers/{ticker}"
+        r2 = requests.get(url2, params={"apiKey": POLYGON_API_KEY}, timeout=8)
+        if r2.status_code == 200:
+            data2 = r2.json().get("ticker", {})
+            si = data2.get("shortInterest") or data2.get("short_interest")
+            if si:
+                result["short_shares"] = int(si)
+    except Exception:
+        pass
+    return result
 
 @st.cache_data(ttl=300, show_spinner=False)
 def get_dark_pool_pct(ticker: str) -> float | None:
@@ -898,6 +937,31 @@ def scan_ticker(ticker: str) -> pd.DataFrame:
         elif dp_pct >= 30: dp_str = f"  |  🔵 Dark Pool: **{dp_pct}%** (accumulo istituzionale)"
         else:              dp_str = f"  |  Dark Pool: {dp_pct}%"
     st.caption(f"Put/Call Ratio: **{pc}** | CALL vol: {cv:,} | PUT vol: {pv:,} | Bias: {bias_label}{dp_str}")
+
+    # Short Interest & Days to Cover
+    si_data = get_short_interest(ticker)
+    si_parts = []
+    if si_data.get("short_pct") is not None:
+        sp = si_data["short_pct"]
+        if   sp >= 40: si_emoji = "🔴🔴"
+        elif sp >= 20: si_emoji = "🔴"
+        elif sp >= 10: si_emoji = "🟡"
+        else:          si_emoji = ""
+        si_parts.append(f"{si_emoji} Short Interest: **{sp}%**")
+    if si_data.get("days_to_cover") is not None:
+        dtc = si_data["days_to_cover"]
+        if   dtc >= 10: dtc_emoji = "🔴🔴"
+        elif dtc >= 5:  dtc_emoji = "🔴"
+        else:           dtc_emoji = ""
+        si_parts.append(f"{dtc_emoji} Days to Cover: **{dtc}gg**")
+    if si_parts:
+        si_str = "  |  ".join(si_parts)
+        # Squeeze fuel alert
+        squeeze = (si_data.get("short_pct") or 0) >= 20 and (si_data.get("days_to_cover") or 0) >= 5
+        if squeeze:
+            st.warning(f"🚀 **SQUEEZE FUEL** — {ticker}: {si_str} — Posizione short elevata con copertura lenta!")
+        else:
+            st.caption(f"📊 {si_str}")
     df_enriched = enrich_with_flow_data(df, ticker, top_n=15)
     if not df_enriched.empty:
         sentiment_df = compute_strike_sentiment(df)
@@ -932,7 +996,7 @@ def scan_ticker(ticker: str) -> pd.DataFrame:
 # =========================
 # LEGENDA / MANUALE IN-APP
 # =========================
-with st.expander("📖 Manuale — Options Flow Scanner PRO v6.1"):
+with st.expander("📖 Manuale — Options Flow Scanner PRO v6.2"):
     st.markdown("""
 ## 🎯 Obiettivo del Tool
 Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volumi anomali rispetto all'open interest, con focus su **smart money** e **accumulo balena**. Nessuna esecuzione automatica — il controllo finale è sempre tuo.
@@ -950,6 +1014,8 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
 | **DTE** | Giorni alla scadenza |
 | **GEX_M** | Gamma Exposure in $M · 🟢 positivo = dealer frena · 🔴 negativo = dealer amplifica |
 | **Dark Pool %** | % volume fuori mercato · >30% 🔵 accumulo istituzionale · >50% 🔵🔵 segnale forte |
+| **Short Interest %** | % float venduto allo scoperto · >20% 🔴 alto · >40% 🔴🔴 squeeze fuel |
+| **Days to Cover** | Giorni per coprire lo short (SI / volume medio) · >5 🔴 pericoloso · >10 🔴🔴 estremo |
 | **Delta** | 0.05–0.25=OTM speculativo · 0.40–0.60=ATM · 0.70–0.95=ITM |
 
 ## ⚠️ Note Operative
@@ -1373,5 +1439,5 @@ st.divider()
 st.caption(
     "⚠️ Questo tool è uno screener di primo livello. "
     "L'analisi finale (grafico, contesto macro, greche) va completata su IBKR. "
-    "Nessun ordine viene eseguito automaticamente. — v6.1"
+    "Nessun ordine viene eseguito automaticamente. — v6.2"
 )
