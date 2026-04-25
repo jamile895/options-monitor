@@ -52,7 +52,7 @@ def get_sheet(sheet_name: str):
 # =========================
 # CONFIG UI
 # =========================
-st.set_page_config(layout="wide", page_title="Options Flow Scanner PRO")
+st.set_page_config(layout="wide", page_title="Options Flow Scanner PRO by Ugo Fortezze 🔥")
 
 # =========================
 # STORICO SCANSIONI
