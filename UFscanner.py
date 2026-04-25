@@ -52,7 +52,7 @@ def get_sheet(sheet_name: str):
 # =========================
 # CONFIG UI
 # =========================
-st.set_page_config(layout="wide", page_title="Options Flow Scanner PRO by Ugo Fortezze 🔥")
+st.set_page_config(layout="wide", page_title="Options Flow Scanner PRO")
 
 # =========================
 # STORICO SCANSIONI
@@ -981,7 +981,7 @@ with st.sidebar:
 # =========================
 # MAIN AREA — HEADER
 # =========================
-st.title("🔥 Options Flow Scanner PRO")
+st.title("🔥 Options Flow Scanner PRO by Ugo Fortezze 🔥")
 st.caption("Powered by Polygon.io — Greeks | Ask Hit | Sweep | Storico Cluster  •  v6.4")
 
 # ── RIEPILOGO FILTRI ATTIVI (sempre visibile, aggiornato in tempo reale) ──
