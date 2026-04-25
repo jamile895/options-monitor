@@ -870,21 +870,19 @@ PRESETS = {
     },
 }
 
-APP_VERSION = "6.3"
+APP_VERSION = "6.4"
 
 with st.sidebar:
     st.markdown("## 🔥 Options Flow Scanner")
-    st.markdown("---")
 
     # Modalità
     mode = st.radio(
-        "**Modalità Trading**",
+        "**Modalità**",
         ["SMALL CAP", "MID CAP", "BIG CAP", "SNIPER", "HOT ONLY", "SPY SWING"],
         key="mode_radio"
     )
     preset = PRESETS[mode]
     st.caption(f"ℹ️ {preset['desc']}")
-    st.markdown("---")
 
     # Reset preset quando cambia modalità o versione
     if ("last_mode" not in st.session_state or
@@ -904,90 +902,117 @@ with st.sidebar:
         st.session_state["ask_hit_min"]     = float(preset["ask_hit_min"])
         st.session_state["flow_min"]        = int(preset["flow_min"])
 
-    # ── VOLUME & VOI ──
-    vol_lbl = width_label(st.session_state["volume_min"], 0, 50000, invert=True)
-    volume_min = st.slider(f"📊 Volume min {vol_lbl}", 0, 50000,
-                           st.session_state["volume_min"], key="volume_min")
+    # ── VOLUME & VOI (2 colonne) ──
+    _c1, _c2 = st.columns(2)
+    with _c1:
+        vol_lbl = width_label(st.session_state["volume_min"], 0, 50000, invert=True)
+        volume_min = st.slider(f"Vol min {vol_lbl}", 0, 50000,
+                               st.session_state["volume_min"], key="volume_min")
+    with _c2:
+        voi_lbl = width_label(st.session_state["voi_min"], 0.0, 20.0, invert=True)
+        voi_min = st.slider(f"VOI min {voi_lbl}", 0.0, 20.0,
+                            st.session_state["voi_min"], step=0.1, key="voi_min")
 
-    voi_lbl = width_label(st.session_state["voi_min"], 0.0, 20.0, invert=True)
-    voi_min = st.slider(f"⚡ VOI min {voi_lbl}", 0.0, 20.0,
-                        st.session_state["voi_min"], step=0.1, key="voi_min")
-
-    st.markdown("---")
-
-    # ── DTE ──
+    # ── DTE (2 colonne) ──
     dte_lbl = dte_label(st.session_state["dte_min"], st.session_state["dte_max"])
-    st.markdown(f"**📅 DTE {dte_lbl}**")
-    dte_min = st.slider("DTE minimo", 0, 365, st.session_state["dte_min"], key="dte_min")
-    dte_max = st.slider("DTE massimo", 1, 365, st.session_state["dte_max"], key="dte_max")
+    st.caption(f"📅 DTE {dte_lbl}")
+    _c3, _c4 = st.columns(2)
+    with _c3:
+        dte_min = st.slider("DTE min", 0, 365, st.session_state["dte_min"], key="dte_min")
+    with _c4:
+        dte_max = st.slider("DTE max", 1, 365, st.session_state["dte_max"], key="dte_max")
 
-    st.markdown("---")
-
-    # ── STRIKE DISTANCE ──
+    # ── STRIKE % (2 colonne) ──
     strike_span = st.session_state["strike_dist_max"] - st.session_state["strike_dist_min"]
-    if strike_span >= 15:   sk_lbl = "🟢 WIDE"
-    elif strike_span >= 7:  sk_lbl = "🟡 MED"
-    else:                   sk_lbl = "🔴 NARROW"
-    st.markdown(f"**🎯 Strike % {sk_lbl}**")
-    strike_dist_min = st.slider("Strike % min", 0, 30, st.session_state["strike_dist_min"],
-                                key="strike_dist_min",
-                                help="Esclude ITM/ATM. Es: 5 = solo OTM oltre 5%")
-    strike_dist_max = st.slider("Strike % max", 1, 50, st.session_state["strike_dist_max"],
-                                key="strike_dist_max")
+    sk_lbl = "🟢 WIDE" if strike_span >= 15 else ("🟡 MED" if strike_span >= 7 else "🔴 NARROW")
+    st.caption(f"🎯 Strike % {sk_lbl}")
+    _c5, _c6 = st.columns(2)
+    with _c5:
+        strike_dist_min = st.slider("Strike % min", 0, 30, st.session_state["strike_dist_min"],
+                                    key="strike_dist_min",
+                                    help="Esclude ITM/ATM. Es: 5 = solo OTM oltre 5%")
+    with _c6:
+        strike_dist_max = st.slider("Strike % max", 1, 50, st.session_state["strike_dist_max"],
+                                    key="strike_dist_max")
 
-    st.markdown("---")
-
-    # ── DELTA ──
+    # ── DELTA (2 colonne) ──
     delta_span = st.session_state["delta_max"] - st.session_state["delta_min"]
-    if delta_span >= 0.6:   dl_lbl = "🟢 WIDE"
-    elif delta_span >= 0.3: dl_lbl = "🟡 MED"
-    else:                   dl_lbl = "🔴 NARROW"
-    st.markdown(f"**Δ Delta {dl_lbl}**")
-    st.caption("0.05=OTM · 0.50=ATM · 0.90=ITM")
-    delta_min = st.slider("Delta min", 0.0, 1.0,
-                          st.session_state["delta_min"], step=0.01, key="delta_min")
-    delta_max = st.slider("Delta max", 0.0, 1.0,
-                          st.session_state["delta_max"], step=0.01, key="delta_max")
+    dl_lbl = "🟢 WIDE" if delta_span >= 0.6 else ("🟡 MED" if delta_span >= 0.3 else "🔴 NARROW")
+    st.caption(f"Δ Delta {dl_lbl}  (0.05=OTM · 0.50=ATM · 0.90=ITM)")
+    _c7, _c8 = st.columns(2)
+    with _c7:
+        delta_min = st.slider("Δ min", 0.0, 1.0,
+                              st.session_state["delta_min"], step=0.01, key="delta_min")
+    with _c8:
+        delta_max = st.slider("Δ max", 0.0, 1.0,
+                              st.session_state["delta_max"], step=0.01, key="delta_max")
 
-    st.markdown("---")
+    # ── SPREAD & FLOW (2 colonne) ──
+    _c9, _c10 = st.columns(2)
+    with _c9:
+        spread_lbl = width_label(st.session_state["spread_max"], 0.01, 20.0)
+        spread_max = st.slider(f"Spread {spread_lbl}", 0.01, 20.0,
+                               st.session_state["spread_max"], step=0.01, key="spread_max")
+    with _c10:
+        flow_lbl = width_label(st.session_state["flow_min"], 0, 5000000, invert=True)
+        flow_min = st.slider(f"Flow $ {flow_lbl}", 0, 5000000,
+                             st.session_state["flow_min"], step=50000, key="flow_min",
+                             help=">$500K = istituzionale. >$1M = whale.")
 
-    # ── SPREAD & FLOW ──
-    spread_lbl = width_label(st.session_state["spread_max"], 0.01, 20.0)
-    spread_max = st.slider(f"💰 Spread bid/ask max {spread_lbl}", 0.01, 20.0,
-                           st.session_state["spread_max"], step=0.01, key="spread_max")
-
-    flow_lbl = width_label(st.session_state["flow_min"], 0, 5000000, invert=True)
-    flow_min = st.slider(f"🌊 Flow $ min {flow_lbl}", 0, 5000000,
-                         st.session_state["flow_min"], step=50000, key="flow_min",
-                         help=">$500K = istituzionale. >$1M = whale.")
-
-    st.markdown("---")
-
-    # ── ASK HIT ──
+    # ── ASK HIT (full width) ──
     ask_hit_lbl = width_label(st.session_state["ask_hit_min"], 0.0, 100.0, invert=True)
     ask_hit_min = st.slider(
-        f"🎯 Ask Hit % min {ask_hit_lbl}",
+        f"Ask Hit % min {ask_hit_lbl}",
         0.0, 100.0, st.session_state["ask_hit_min"], step=5.0, key="ask_hit_min",
         help="≥55% = buyer aggressivo. ≤30% = seller."
     )
 
-    st.markdown("---")
-
     # ── TIPO OPZIONE & TELEGRAM ──
-    option_type = st.radio("Tipo opzione", ["CALL", "PUT", "BOTH"], horizontal=True)
-    send_telegram = st.checkbox("📲 Telegram Alerts", value=False)
-
-    st.markdown("---")
+    _c11, _c12 = st.columns([2, 1])
+    with _c11:
+        option_type = st.radio("Tipo", ["CALL", "PUT", "BOTH"], horizontal=True)
+    with _c12:
+        send_telegram = st.checkbox("📲 TG", value=False, help="Attiva Telegram Alerts")
 
     # ── TICKER INPUT & SCAN BUTTON ──
-    tickers_input = st.text_input("🔍 Ticker (separati da virgola)", "SPY")
+    tickers_input = st.text_input("🔍 Ticker (virgola)", "SPY")
     scan_clicked = st.button("🚀 SCANSIONA", type="primary", use_container_width=True)
 
 # =========================
 # MAIN AREA — HEADER
 # =========================
 st.title("🔥 Options Flow Scanner PRO")
-st.caption("Powered by Polygon.io — Greeks | Ask Hit | Sweep | Storico Cluster  •  v6.3")
+st.caption("Powered by Polygon.io — Greeks | Ask Hit | Sweep | Storico Cluster  •  v6.4")
+
+# ── RIEPILOGO FILTRI ATTIVI (sempre visibile, aggiornato in tempo reale) ──
+def _fk(v):
+    if v >= 1_000_000: return f"{v/1_000_000:.1f}M"
+    if v >= 1_000:     return f"{v/1_000:.0f}K"
+    return str(int(v))
+
+_vol   = st.session_state.get("volume_min", 0)
+_voi   = st.session_state.get("voi_min", 0.0)
+_dmin  = st.session_state.get("dte_min", 0)
+_dmax  = st.session_state.get("dte_max", 365)
+_skmin = st.session_state.get("strike_dist_min", 0)
+_skmax = st.session_state.get("strike_dist_max", 50)
+_dmin2 = st.session_state.get("delta_min", 0.0)
+_dmax2 = st.session_state.get("delta_max", 1.0)
+_sprd  = st.session_state.get("spread_max", 20.0)
+_flow  = st.session_state.get("flow_min", 0)
+_ask   = st.session_state.get("ask_hit_min", 0.0)
+_mode  = st.session_state.get("mode_radio", "—")
+
+st.info(
+    f"**{_mode}** · "
+    f"Vol≥{_vol:,} · VOI≥{_voi:.1f} · "
+    f"DTE {_dmin}–{_dmax} · "
+    f"Strike {_skmin}–{_skmax}% · "
+    f"Δ {_dmin2:.2f}–{_dmax2:.2f} · "
+    f"Spread≤{_sprd:.2f} · "
+    f"Flow≥{_fk(_flow)} · "
+    f"AskHit≥{int(_ask)}%"
+)
 
 _gs_client = get_gsheet_client()
 if _gs_client:
@@ -1435,5 +1460,5 @@ st.divider()
 st.caption(
     "⚠️ Questo tool è uno screener di primo livello. "
     "L'analisi finale (grafico, contesto macro, greche) va completata su IBKR. "
-    "Nessun ordine viene eseguito automaticamente. — v6.3"
+    "Nessun ordine viene eseguito automaticamente. — v6.4"
 )
