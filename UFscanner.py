@@ -53,13 +53,6 @@ def get_sheet(sheet_name: str):
 # CONFIG UI
 # =========================
 st.set_page_config(layout="wide", page_title="Options Flow Scanner PRO")
-st.title("🔥 Options Flow Scanner PRO 🔥 by Ugo Fortezze")
-st.caption("Powered by Polygon.io — Greeks | Ask Hit | Sweep | Storico Cluster")
-_gs_client = get_gsheet_client()
-if _gs_client:
-    st.caption("📊 Google Sheets: ✅ connesso — storico e watchlist persistenti")
-else:
-    st.caption("📊 Google Sheets: ⚠️ non connesso — storico salvato localmente")
 
 # =========================
 # STORICO SCANSIONI
@@ -419,167 +412,6 @@ def load_watchlist_history(ticker=None, strike=None, expiration=None, contract_t
     return rows
 
 # =========================
-# MODALITÀ
-# =========================
-mode = st.radio(
-    "Modalità Trading",
-    ["SMALL CAP", "MID CAP", "BIG CAP", "SNIPER", "HOT ONLY", "SPY SWING"],
-    horizontal=True,
-    key="mode_radio"
-)
-
-PRESETS = {
-    "SMALL CAP": {
-        "volume_min": 100, "voi_min": 1.5, "dte_max": 245, "dte_min": 45,
-        "strike_dist_min": 0, "strike_dist_max": 20, "spread_max": 20.0,
-        "delta_min": 0.05, "delta_max": 0.95, "ask_hit_min": 0.0, "flow_min": 0,
-        "desc": "Small Cap (<$2B) — bassa liquidità, filtri adattati"
-    },
-    "MID CAP": {
-        "volume_min": 200, "voi_min": 1.2, "dte_max": 245, "dte_min": 45,
-        "strike_dist_min": 0, "strike_dist_max": 15, "spread_max": 20.0,
-        "delta_min": 0.10, "delta_max": 0.90, "ask_hit_min": 0.0, "flow_min": 0,
-        "desc": "Mid Cap ($2B-$10B) — bilanciato tra liquidità e segnale"
-    },
-    "BIG CAP": {
-        "volume_min": 500, "voi_min": 1.0, "dte_max": 245, "dte_min": 45,
-        "strike_dist_min": 0, "strike_dist_max": 12, "spread_max": 20.0,
-        "delta_min": 0.10, "delta_max": 0.90, "ask_hit_min": 0.0, "flow_min": 0,
-        "desc": "Big Cap (>$10B) — alta liquidità, filtri standard"
-    },
-    "SNIPER": {
-        "volume_min": 1000, "voi_min": 2.0, "dte_max": 245, "dte_min": 45,
-        "strike_dist_min": 0, "strike_dist_max": 5, "spread_max": 20.0,
-        "delta_min": 0.20, "delta_max": 0.80, "ask_hit_min": 55.0, "flow_min": 0,
-        "desc": "SNIPER — strike vicino, scadenza breve, alta pressione"
-    },
-    "HOT ONLY": {
-        "volume_min": 2000, "voi_min": 3.0, "dte_max": 245, "dte_min": 45,
-        "strike_dist_min": 0, "strike_dist_max": 3, "spread_max": 20.0,
-        "delta_min": 0.25, "delta_max": 0.75, "ask_hit_min": 60.0, "flow_min": 0,
-        "desc": "HOT ONLY — solo flussi anomali estremi, scadenza imminente"
-    },
-    "SPY SWING": {
-        "volume_min": 100, "voi_min": 0.5, "dte_max": 245, "dte_min": 45,
-        "strike_dist_min": 0, "strike_dist_max": 15, "spread_max": 20.0,
-        "delta_min": 0.05, "delta_max": 0.80, "ask_hit_min": 0.0, "flow_min": 50000,
-        "desc": "SPY SWING — DTE 45-245gg | Flow >$50K | Allarga i filtri, poi stringi manualmente"
-    },
-}
-
-preset = PRESETS[mode]
-st.caption(f"ℹ️ {preset['desc']}")
-
-APP_VERSION = "6.2"
-if ("last_mode" not in st.session_state or
-    st.session_state.get("last_mode") != mode or
-    st.session_state.get("app_version") != APP_VERSION):
-    st.session_state["app_version"]     = APP_VERSION
-    st.session_state["last_mode"]       = mode
-    st.session_state["volume_min"]      = preset["volume_min"]
-    st.session_state["voi_min"]         = float(preset["voi_min"])
-    st.session_state["dte_max"]         = preset["dte_max"]
-    st.session_state["dte_min"]         = preset["dte_min"]
-    st.session_state["strike_dist_min"] = preset["strike_dist_min"]
-    st.session_state["strike_dist_max"] = preset["strike_dist_max"]
-    st.session_state["spread_max"]      = float(preset["spread_max"])
-    st.session_state["delta_min"]       = float(preset["delta_min"])
-    st.session_state["delta_max"]       = float(preset["delta_max"])
-    st.session_state["ask_hit_min"]     = float(preset["ask_hit_min"])
-    st.session_state["flow_min"]        = int(preset["flow_min"])
-
-def width_label(val, min_val, max_val, invert=False):
-    if max_val == min_val: return ""
-    pct = (val - min_val) / (max_val - min_val)
-    if invert: pct = 1 - pct
-    if pct >= 0.7:   return "🟢 WIDE"
-    elif pct >= 0.4: return "🟡 MED"
-    else:            return "🔴 NARROW"
-
-def dte_label(dmin, dmax):
-    span = dmax - dmin
-    if span >= 150: return "🟢 WIDE"
-    elif span >= 60: return "🟡 MED"
-    else:            return "🔴 NARROW"
-
-col_s1, col_s2 = st.columns(2)
-with col_s1:
-    vol_lbl = width_label(st.session_state["volume_min"], 0, 50000, invert=True)
-    volume_min = st.slider(f"Volume minimo (contratti) {vol_lbl}", 0, 50000,
-                           st.session_state["volume_min"], key="volume_min")
-with col_s2:
-    voi_lbl = width_label(st.session_state["voi_min"], 0.0, 20.0, invert=True)
-    voi_min = st.slider(f"VOI minimo (vol/OI) {voi_lbl}", 0.0, 20.0,
-                        st.session_state["voi_min"], step=0.1, key="voi_min")
-
-st.markdown("---")
-dte_lbl = dte_label(st.session_state["dte_min"], st.session_state["dte_max"])
-st.markdown(f"**📅 Finestra DTE (giorni alla scadenza) {dte_lbl}**")
-col_dte1, col_dte2 = st.columns(2)
-with col_dte1:
-    dte_min = st.slider("DTE minimo", 0, 365, st.session_state["dte_min"], key="dte_min")
-with col_dte2:
-    dte_max = st.slider("DTE massimo", 1, 365, st.session_state["dte_max"], key="dte_max")
-
-st.markdown("---")
-strike_span = st.session_state["strike_dist_max"] - st.session_state["strike_dist_min"]
-if strike_span >= 15:   sk_lbl = "🟢 WIDE"
-elif strike_span >= 7:  sk_lbl = "🟡 MED"
-else:                   sk_lbl = "🔴 NARROW"
-st.markdown(f"**🎯 Distanza Strike % {sk_lbl}**")
-col_sk1, col_sk2 = st.columns(2)
-with col_sk1:
-    strike_dist_min = st.slider("Strike % minima", 0, 30, st.session_state["strike_dist_min"],
-                                key="strike_dist_min",
-                                help="Esclude ITM e ATM. Es: 5 = solo OTM oltre il 5%")
-with col_sk2:
-    strike_dist_max = st.slider("Strike % massima", 1, 50, st.session_state["strike_dist_max"],
-                                key="strike_dist_max")
-
-st.markdown("---")
-delta_span = st.session_state["delta_max"] - st.session_state["delta_min"]
-if delta_span >= 0.6:   dl_lbl = "🟢 WIDE"
-elif delta_span >= 0.3: dl_lbl = "🟡 MED"
-else:                   dl_lbl = "🔴 NARROW"
-st.markdown(f"**Δ Delta range {dl_lbl}** — (0.05–0.25 = OTM speculativo · 0.40–0.60 = ATM · 0.70–0.95 = ITM)")
-col_d1, col_d2 = st.columns(2)
-with col_d1:
-    delta_min = st.slider("Delta minimo (0.05=OTM · 0.50=ATM · 0.90=ITM)", 0.0, 1.0,
-                          st.session_state["delta_min"], step=0.01, key="delta_min")
-with col_d2:
-    delta_max = st.slider("Delta massimo (0.05=OTM · 0.50=ATM · 0.90=ITM)", 0.0, 1.0,
-                          st.session_state["delta_max"], step=0.01, key="delta_max")
-
-st.markdown("---")
-col_s3, col_s4 = st.columns(2)
-with col_s3:
-    spread_lbl = width_label(st.session_state["spread_max"], 0.01, 20.0)
-    spread_max = st.slider(f"Spread bid/ask max ($) {spread_lbl}", 0.01, 20.0,
-                           st.session_state["spread_max"], step=0.01, key="spread_max")
-with col_s4:
-    flow_lbl = width_label(st.session_state["flow_min"], 0, 5000000, invert=True)
-    flow_min = st.slider(f"Flow $ minimo {flow_lbl}", 0, 5000000,
-                         st.session_state["flow_min"], step=50000, key="flow_min",
-                         help=">$500K = istituzionale. >$1M = whale.")
-
-st.markdown("---")
-ask_hit_lbl = width_label(st.session_state["ask_hit_min"], 0.0, 100.0, invert=True)
-ask_hit_min = st.slider(
-    f"Ask Hit % minimo (0 = mostra tutto) {ask_hit_lbl}",
-    0.0, 100.0, st.session_state["ask_hit_min"], step=5.0, key="ask_hit_min",
-    help="≥55% = buyer aggressivo. ≤30% = seller."
-)
-st.markdown("---")
-
-col1, col2 = st.columns(2)
-with col1:
-    option_type = st.radio("Tipo opzione", ["CALL", "PUT", "BOTH"], horizontal=True)
-with col2:
-    send_telegram = st.checkbox("📲 Attiva Telegram Alerts", value=False)
-
-tickers_input = st.text_input("Ticker (separati da virgola)", "SPY")
-
-# =========================
 # HELPERS
 # =========================
 
@@ -600,6 +432,20 @@ def send_telegram_message(text: str) -> bool:
     except Exception as e:
         st.warning(f"Telegram error: {e}")
         return False
+
+def width_label(val, min_val, max_val, invert=False):
+    if max_val == min_val: return ""
+    pct = (val - min_val) / (max_val - min_val)
+    if invert: pct = 1 - pct
+    if pct >= 0.7:   return "🟢 WIDE"
+    elif pct >= 0.4: return "🟡 MED"
+    else:            return "🔴 NARROW"
+
+def dte_label(dmin, dmax):
+    span = dmax - dmin
+    if span >= 150: return "🟢 WIDE"
+    elif span >= 60: return "🟡 MED"
+    else:            return "🔴 NARROW"
 
 # =========================
 # POLYGON — PREZZO SOTTOSTANTE
@@ -629,13 +475,8 @@ def get_stock_price(ticker: str) -> float | None:
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_short_interest(ticker: str) -> dict:
-    """
-    Recupera Short Interest e Days to Cover da Polygon.
-    Ritorna dict con: short_pct, days_to_cover, short_shares
-    """
     result = {"short_pct": None, "days_to_cover": None, "short_shares": None}
     try:
-        # Polygon short interest endpoint
         url = f"https://api.polygon.io/v2/reference/financials/{ticker}"
         r = requests.get(url, params={"apiKey": POLYGON_API_KEY, "limit": 1}, timeout=8)
         if r.status_code == 200:
@@ -654,7 +495,6 @@ def get_short_interest(ticker: str) -> dict:
     except Exception:
         pass
     try:
-        # Fallback: snapshot con short interest
         url2 = f"https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers/{ticker}"
         r2 = requests.get(url2, params={"apiKey": POLYGON_API_KEY}, timeout=8)
         if r2.status_code == 200:
@@ -668,7 +508,6 @@ def get_short_interest(ticker: str) -> dict:
 
 @st.cache_data(ttl=300, show_spinner=False)
 def get_dark_pool_pct(ticker: str) -> float | None:
-    """Recupera Dark Pool % dal snapshot stocks di Polygon."""
     try:
         url = f"https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers/{ticker}"
         r = requests.get(url, params={"apiKey": POLYGON_API_KEY}, timeout=8)
@@ -677,7 +516,6 @@ def get_dark_pool_pct(ticker: str) -> float | None:
             day = data.get("day", {})
             total_vol  = day.get("v") or 0
             otc_vol    = day.get("otcVolume") or 0
-            # Polygon chiama il volume dark/OTC come otcVolume o darkVolume
             dark_vol   = day.get("darkVolume") or otc_vol or 0
             if total_vol > 0 and dark_vol > 0:
                 return round((dark_vol / total_vol) * 100, 1)
@@ -801,13 +639,12 @@ def parse_and_filter(raw: list[dict], underlying: float, ticker: str) -> pd.Data
     df["UNDER"]          = underlying
     df["FLOW_POWER_NUM"] = (df["volume"] * df["MID"]).round(0)
 
-    # GEX = gamma × OI × 100 × underlying²  (in migliaia $)
-    # CALL contribuisce positivamente, PUT negativamente
     def calc_gex(row):
         if row["gamma"] is None or row["gamma"] == 0: return 0
         sign = 1 if row["type"] == "CALL" else -1
         return sign * row["gamma"] * row["OI"] * 100 * (underlying ** 2) / 1_000_000
     df["GEX_M"] = df.apply(calc_gex, axis=1).round(2)
+
     df = df[df["volume"]         >= volume_min]
     df = df[df["VOI"]            >= voi_min]
     df = df[df["DTE"]            >= dte_min]
@@ -938,7 +775,6 @@ def scan_ticker(ticker: str) -> pd.DataFrame:
         else:              dp_str = f"  |  Dark Pool: {dp_pct}%"
     st.caption(f"Put/Call Ratio: **{pc}** | CALL vol: {cv:,} | PUT vol: {pv:,} | Bias: {bias_label}{dp_str}")
 
-    # Short Interest & Days to Cover
     si_data = get_short_interest(ticker)
     si_parts = []
     if si_data.get("short_pct") is not None:
@@ -956,7 +792,6 @@ def scan_ticker(ticker: str) -> pd.DataFrame:
         si_parts.append(f"{dtc_emoji} Days to Cover: **{dtc}gg**")
     if si_parts:
         si_str = "  |  ".join(si_parts)
-        # Squeeze fuel alert
         squeeze = (si_data.get("short_pct") or 0) >= 20 and (si_data.get("days_to_cover") or 0) >= 5
         if squeeze:
             st.warning(f"🚀 **SQUEEZE FUEL** — {ticker}: {si_str} — Posizione short elevata con copertura lenta!")
@@ -994,9 +829,176 @@ def scan_ticker(ticker: str) -> pd.DataFrame:
     return df_enriched
 
 # =========================
+# SIDEBAR — TUTTI I FILTRI
+# =========================
+PRESETS = {
+    "SMALL CAP": {
+        "volume_min": 100, "voi_min": 1.5, "dte_max": 245, "dte_min": 45,
+        "strike_dist_min": 0, "strike_dist_max": 20, "spread_max": 20.0,
+        "delta_min": 0.05, "delta_max": 0.95, "ask_hit_min": 0.0, "flow_min": 0,
+        "desc": "Small Cap (<$2B) — bassa liquidità, filtri adattati"
+    },
+    "MID CAP": {
+        "volume_min": 200, "voi_min": 1.2, "dte_max": 245, "dte_min": 45,
+        "strike_dist_min": 0, "strike_dist_max": 15, "spread_max": 20.0,
+        "delta_min": 0.10, "delta_max": 0.90, "ask_hit_min": 0.0, "flow_min": 0,
+        "desc": "Mid Cap ($2B-$10B) — bilanciato tra liquidità e segnale"
+    },
+    "BIG CAP": {
+        "volume_min": 500, "voi_min": 1.0, "dte_max": 245, "dte_min": 45,
+        "strike_dist_min": 0, "strike_dist_max": 12, "spread_max": 20.0,
+        "delta_min": 0.10, "delta_max": 0.90, "ask_hit_min": 0.0, "flow_min": 0,
+        "desc": "Big Cap (>$10B) — alta liquidità, filtri standard"
+    },
+    "SNIPER": {
+        "volume_min": 1000, "voi_min": 2.0, "dte_max": 245, "dte_min": 45,
+        "strike_dist_min": 0, "strike_dist_max": 5, "spread_max": 20.0,
+        "delta_min": 0.20, "delta_max": 0.80, "ask_hit_min": 55.0, "flow_min": 0,
+        "desc": "SNIPER — strike vicino, scadenza breve, alta pressione"
+    },
+    "HOT ONLY": {
+        "volume_min": 2000, "voi_min": 3.0, "dte_max": 245, "dte_min": 45,
+        "strike_dist_min": 0, "strike_dist_max": 3, "spread_max": 20.0,
+        "delta_min": 0.25, "delta_max": 0.75, "ask_hit_min": 60.0, "flow_min": 0,
+        "desc": "HOT ONLY — solo flussi anomali estremi, scadenza imminente"
+    },
+    "SPY SWING": {
+        "volume_min": 100, "voi_min": 0.5, "dte_max": 245, "dte_min": 45,
+        "strike_dist_min": 0, "strike_dist_max": 15, "spread_max": 20.0,
+        "delta_min": 0.05, "delta_max": 0.80, "ask_hit_min": 0.0, "flow_min": 50000,
+        "desc": "SPY SWING — DTE 45-245gg | Flow >$50K | Allarga i filtri, poi stringi manualmente"
+    },
+}
+
+APP_VERSION = "6.3"
+
+with st.sidebar:
+    st.markdown("## 🔥 Options Flow Scanner")
+    st.markdown("---")
+
+    # Modalità
+    mode = st.radio(
+        "**Modalità Trading**",
+        ["SMALL CAP", "MID CAP", "BIG CAP", "SNIPER", "HOT ONLY", "SPY SWING"],
+        key="mode_radio"
+    )
+    preset = PRESETS[mode]
+    st.caption(f"ℹ️ {preset['desc']}")
+    st.markdown("---")
+
+    # Reset preset quando cambia modalità o versione
+    if ("last_mode" not in st.session_state or
+        st.session_state.get("last_mode") != mode or
+        st.session_state.get("app_version") != APP_VERSION):
+        st.session_state["app_version"]     = APP_VERSION
+        st.session_state["last_mode"]       = mode
+        st.session_state["volume_min"]      = preset["volume_min"]
+        st.session_state["voi_min"]         = float(preset["voi_min"])
+        st.session_state["dte_max"]         = preset["dte_max"]
+        st.session_state["dte_min"]         = preset["dte_min"]
+        st.session_state["strike_dist_min"] = preset["strike_dist_min"]
+        st.session_state["strike_dist_max"] = preset["strike_dist_max"]
+        st.session_state["spread_max"]      = float(preset["spread_max"])
+        st.session_state["delta_min"]       = float(preset["delta_min"])
+        st.session_state["delta_max"]       = float(preset["delta_max"])
+        st.session_state["ask_hit_min"]     = float(preset["ask_hit_min"])
+        st.session_state["flow_min"]        = int(preset["flow_min"])
+
+    # ── VOLUME & VOI ──
+    vol_lbl = width_label(st.session_state["volume_min"], 0, 50000, invert=True)
+    volume_min = st.slider(f"📊 Volume min {vol_lbl}", 0, 50000,
+                           st.session_state["volume_min"], key="volume_min")
+
+    voi_lbl = width_label(st.session_state["voi_min"], 0.0, 20.0, invert=True)
+    voi_min = st.slider(f"⚡ VOI min {voi_lbl}", 0.0, 20.0,
+                        st.session_state["voi_min"], step=0.1, key="voi_min")
+
+    st.markdown("---")
+
+    # ── DTE ──
+    dte_lbl = dte_label(st.session_state["dte_min"], st.session_state["dte_max"])
+    st.markdown(f"**📅 DTE {dte_lbl}**")
+    dte_min = st.slider("DTE minimo", 0, 365, st.session_state["dte_min"], key="dte_min")
+    dte_max = st.slider("DTE massimo", 1, 365, st.session_state["dte_max"], key="dte_max")
+
+    st.markdown("---")
+
+    # ── STRIKE DISTANCE ──
+    strike_span = st.session_state["strike_dist_max"] - st.session_state["strike_dist_min"]
+    if strike_span >= 15:   sk_lbl = "🟢 WIDE"
+    elif strike_span >= 7:  sk_lbl = "🟡 MED"
+    else:                   sk_lbl = "🔴 NARROW"
+    st.markdown(f"**🎯 Strike % {sk_lbl}**")
+    strike_dist_min = st.slider("Strike % min", 0, 30, st.session_state["strike_dist_min"],
+                                key="strike_dist_min",
+                                help="Esclude ITM/ATM. Es: 5 = solo OTM oltre 5%")
+    strike_dist_max = st.slider("Strike % max", 1, 50, st.session_state["strike_dist_max"],
+                                key="strike_dist_max")
+
+    st.markdown("---")
+
+    # ── DELTA ──
+    delta_span = st.session_state["delta_max"] - st.session_state["delta_min"]
+    if delta_span >= 0.6:   dl_lbl = "🟢 WIDE"
+    elif delta_span >= 0.3: dl_lbl = "🟡 MED"
+    else:                   dl_lbl = "🔴 NARROW"
+    st.markdown(f"**Δ Delta {dl_lbl}**")
+    st.caption("0.05=OTM · 0.50=ATM · 0.90=ITM")
+    delta_min = st.slider("Delta min", 0.0, 1.0,
+                          st.session_state["delta_min"], step=0.01, key="delta_min")
+    delta_max = st.slider("Delta max", 0.0, 1.0,
+                          st.session_state["delta_max"], step=0.01, key="delta_max")
+
+    st.markdown("---")
+
+    # ── SPREAD & FLOW ──
+    spread_lbl = width_label(st.session_state["spread_max"], 0.01, 20.0)
+    spread_max = st.slider(f"💰 Spread bid/ask max {spread_lbl}", 0.01, 20.0,
+                           st.session_state["spread_max"], step=0.01, key="spread_max")
+
+    flow_lbl = width_label(st.session_state["flow_min"], 0, 5000000, invert=True)
+    flow_min = st.slider(f"🌊 Flow $ min {flow_lbl}", 0, 5000000,
+                         st.session_state["flow_min"], step=50000, key="flow_min",
+                         help=">$500K = istituzionale. >$1M = whale.")
+
+    st.markdown("---")
+
+    # ── ASK HIT ──
+    ask_hit_lbl = width_label(st.session_state["ask_hit_min"], 0.0, 100.0, invert=True)
+    ask_hit_min = st.slider(
+        f"🎯 Ask Hit % min {ask_hit_lbl}",
+        0.0, 100.0, st.session_state["ask_hit_min"], step=5.0, key="ask_hit_min",
+        help="≥55% = buyer aggressivo. ≤30% = seller."
+    )
+
+    st.markdown("---")
+
+    # ── TIPO OPZIONE & TELEGRAM ──
+    option_type = st.radio("Tipo opzione", ["CALL", "PUT", "BOTH"], horizontal=True)
+    send_telegram = st.checkbox("📲 Telegram Alerts", value=False)
+
+    st.markdown("---")
+
+    # ── TICKER INPUT & SCAN BUTTON ──
+    tickers_input = st.text_input("🔍 Ticker (separati da virgola)", "SPY")
+    scan_clicked = st.button("🚀 SCANSIONA", type="primary", use_container_width=True)
+
+# =========================
+# MAIN AREA — HEADER
+# =========================
+st.title("🔥 Options Flow Scanner PRO")
+st.caption("Powered by Polygon.io — Greeks | Ask Hit | Sweep | Storico Cluster  •  v6.3")
+
+_gs_client = get_gsheet_client()
+if _gs_client:
+    st.caption("📊 Google Sheets: ✅ connesso")
+else:
+    st.caption("📊 Google Sheets: ⚠️ non connesso — storico salvato localmente")
+
+# =========================
 # LEGENDA / MANUALE IN-APP
 # =========================
-with st.expander("📖 Manuale — Options Flow Scanner PRO v6.2"):
+with st.expander("📖 Manuale — Options Flow Scanner PRO v6.3"):
     st.markdown("""
 ## 🎯 Obiettivo del Tool
 Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volumi anomali rispetto all'open interest, con focus su **smart money** e **accumulo balena**. Nessuna esecuzione automatica — il controllo finale è sempre tuo.
@@ -1015,7 +1017,7 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
 | **GEX_M** | Gamma Exposure in $M · 🟢 positivo = dealer frena · 🔴 negativo = dealer amplifica |
 | **Dark Pool %** | % volume fuori mercato · >30% 🔵 accumulo istituzionale · >50% 🔵🔵 segnale forte |
 | **Short Interest %** | % float venduto allo scoperto · >20% 🔴 alto · >40% 🔴🔴 squeeze fuel |
-| **Days to Cover** | Giorni per coprire lo short (SI / volume medio) · >5 🔴 pericoloso · >10 🔴🔴 estremo |
+| **Days to Cover** | Giorni per coprire lo short · >5 🔴 pericoloso · >10 🔴🔴 estremo |
 | **Delta** | 0.05–0.25=OTM speculativo · 0.40–0.60=ATM · 0.70–0.95=ITM |
 
 ## ⚠️ Note Operative
@@ -1176,9 +1178,9 @@ with st.expander("⭐ Watchlist — Monitora contratti specifici"):
         st.info("Nessun contratto in watchlist. Aggiungine uno sopra.")
 
 # =========================
-# SCAN BUTTON
+# SCAN BUTTON (sidebar) — LOGICA
 # =========================
-if st.button("🚀 Scansiona mercato", type="primary", use_container_width=True):
+if scan_clicked:
     tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
     if not tickers:
         st.error("Inserisci almeno un ticker.")
@@ -1196,7 +1198,6 @@ if st.button("🚀 Scansiona mercato", type="primary", use_container_width=True)
         final_df = pd.concat([final_df, top], ignore_index=True)
 
         if send_telegram:
-            # Solo GO e HOLD — niente STOP
             top_filtered = top[top["SIG"].str.contains("GO|HOLD", na=False)]
             if not top_filtered.empty:
                 telegram_text += f"🔥 TOP FLOW — {ticker} [{mode}]\n\n"
@@ -1229,7 +1230,6 @@ if st.button("🚀 Scansiona mercato", type="primary", use_container_width=True)
             else:
                 st.error("❌ Errore invio Telegram")
 
-        # Salva in session_state come lista di dict semplici
         records = []
         for _, r in final_df.iterrows():
             rec = {}
@@ -1302,12 +1302,11 @@ if st.session_state.get("saved_records"):
             if v >= 2: return "background-color:#1a3a1a; color:#00ff88"
         except: pass
         return ""
-
     def hl_gex(val):
         try:
             v = float(val)
-            if v >= 1.0:  return "background-color:#1a3a1a; color:#00ff88"   # verde = dealer frena
-            if v <= -1.0: return "background-color:#3a0a0a; color:#ff4444"   # rosso = dealer amplifica
+            if v >= 1.0:  return "background-color:#1a3a1a; color:#00ff88"
+            if v <= -1.0: return "background-color:#3a0a0a; color:#ff4444"
             return ""
         except: return ""
 
@@ -1338,14 +1337,13 @@ if st.session_state.get("saved_records"):
     )
     st.dataframe(styled, use_container_width=True, hide_index=True)
 
-    # GEX Summary per strike
+    # GEX Summary
     if "GEX_M" in df_show.columns and "strike" in df_show.columns:
         with st.expander("⚡ GEX — Gamma Exposure per Strike", expanded=False):
             st.markdown("""
 **Come leggere il GEX:**
 - 🟢 **GEX positivo** → dealer long gamma → frenano i movimenti → livello di supporto/resistenza
 - 🔴 **GEX negativo** → dealer short gamma → amplificano i movimenti → livello esplosivo
-- Più è alto in valore assoluto, più è significativo
 """)
             gex_by_strike = (
                 df_show.groupby("strike")["GEX_M"]
@@ -1358,7 +1356,6 @@ if st.session_state.get("saved_records"):
                 lambda x: str(int(x)) if x == int(x) else f"{x:.2f}"
             )
             gex_by_strike["GEX Totale ($M)"] = gex_by_strike["GEX Totale ($M)"].round(2)
-
             def hl_gex_table(val):
                 try:
                     v = float(val)
@@ -1366,7 +1363,6 @@ if st.session_state.get("saved_records"):
                     if v <= -1.0: return "background-color:#3a0a0a; color:#ff4444"
                 except: pass
                 return ""
-
             st.dataframe(
                 gex_by_strike.style
                 .map(hl_gex_table, subset=["GEX Totale ($M)"])
@@ -1374,7 +1370,7 @@ if st.session_state.get("saved_records"):
                 use_container_width=True, hide_index=True
             )
 
-    # Greeks expander
+    # Greeks
     df_greeks = df_show.copy()
     if "bid" in df_greeks.columns:    df_greeks = df_greeks.rename(columns={"bid": "~bid"})
     if "ask" in df_greeks.columns:    df_greeks = df_greeks.rename(columns={"ask": "~ask"})
@@ -1397,7 +1393,7 @@ if st.session_state.get("saved_records"):
         )
         st.caption("~bid / ~ask / ~SPREAD = stime da MID ±1.5% (quote live richiedono piano Advanced)")
 
-    # Aggiungi a Watchlist — DOPO la tabella, stessa pagina
+    # Aggiungi a Watchlist
     st.markdown("---")
     st.markdown("### ⭐ Aggiungi alla Watchlist")
     scan_records_wl = [
@@ -1439,5 +1435,5 @@ st.divider()
 st.caption(
     "⚠️ Questo tool è uno screener di primo livello. "
     "L'analisi finale (grafico, contesto macro, greche) va completata su IBKR. "
-    "Nessun ordine viene eseguito automaticamente. — v6.2"
+    "Nessun ordine viene eseguito automaticamente. — v6.3"
 )
