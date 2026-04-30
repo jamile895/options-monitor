@@ -446,6 +446,294 @@ def dte_label(dmin, dmax):
     if span >= 150: return "🟢 WIDE"
     elif span >= 60: return "🟡 MED"
     else:            return "🔴 NARROW"
+        # =========================
+# SEC EDGAR — INSIDER TRADING (Form 4)
+# =========================
+
+# Mappa ticker → CIK (cache statica per i big cap più usati)
+TICKER_TO_CIK = {
+    "AAPL": "0000320193", "MSFT": "0000789019", "GOOGL": "0001652044",
+    "GOOG":  "0001652044", "AMZN": "0001018724", "META":  "0001326801",
+    "NVDA":  "0001045810", "TSLA": "0001318605", "SPY":   "0000884394",
+    "QQQ":   "0001067839", "NFLX": "0001065280", "AMD":   "0000002488",
+    "INTC":  "0000050863", "CRM":  "0001108524", "ORCL":  "0001341439",
+    "UBER":  "0001543151", "LYFT": "0001759509", "BABA":  "0001577552",
+    "JPM":   "0000019617", "BAC":  "0000070858", "WMT":   "0000104169",
+    "DIS":   "0001001039", "V":    "0001403161", "MA":    "0001141391",
+}
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_cik_for_ticker(ticker: str) -> str | None:
+    """Risolve ticker → CIK via SEC EDGAR company search."""
+    # Prova cache statica prima
+    if ticker.upper() in TICKER_TO_CIK:
+        return TICKER_TO_CIK[ticker.upper()]
+    # Fallback: ricerca dinamica
+    try:
+        url = "https://efts.sec.gov/LATEST/search-index"
+        params = {"q": f'"{ticker}"', "dateRange": "custom",
+                  "startdt": "2020-01-01", "forms": "10-K", "hits.hits._source": "period_of_report,entity_name,file_date"}
+        r = requests.get(url, params=params, timeout=8,
+                         headers={"User-Agent": "OptionsFlowScanner scanner@options.com"})
+        if r.status_code == 200:
+            hits = r.json().get("hits", {}).get("hits", [])
+            if hits:
+                return hits[0].get("_source", {}).get("entity_id") or None
+    except Exception:
+        pass
+    # Secondo fallback: company_facts endpoint
+    try:
+        url2 = f"https://www.sec.gov/cgi-bin/browse-edgar?company=&CIK={ticker}&type=4&dateb=&owner=include&count=1&search_text=&action=getcompany&output=atom"
+        r2 = requests.get(url2, timeout=8,
+                          headers={"User-Agent": "OptionsFlowScanner scanner@options.com"})
+        if r2.status_code == 200:
+            import re
+            m = re.search(r'CIK=(\d+)', r2.text)
+            if m:
+                return m.group(1).zfill(10)
+    except Exception:
+        pass
+    return None
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_insider_transactions(ticker: str, days_back: int = 90) -> list[dict]:
+    """
+    Scarica le ultime transazioni Form 4 per un ticker da SEC EDGAR.
+    Restituisce lista di dict con: name, role, date, type, shares, price, value.
+    """
+    cik = get_cik_for_ticker(ticker)
+    if not cik:
+        return []
+
+    cik_clean = str(cik).lstrip("0")
+    cutoff = (datetime.today() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+
+    try:
+        # Recupera submissions (include lista filing recenti)
+        url = f"https://data.sec.gov/submissions/CIK{str(cik).zfill(10)}.json"
+        r = requests.get(url, timeout=10,
+                         headers={"User-Agent": "OptionsFlowScanner scanner@options.com"})
+        if r.status_code != 200:
+            return []
+        data = r.json()
+    except Exception:
+        return []
+
+    recent = data.get("filings", {}).get("recent", {})
+    forms      = recent.get("form", [])
+    dates      = recent.get("filingDate", [])
+    accessions = recent.get("accessionNumber", [])
+    descriptions = recent.get("primaryDocument", [])
+
+    # Filtra solo Form 4 recenti
+    form4_filings = []
+    for i, f in enumerate(forms):
+        if f in ("4", "4/A") and dates[i] >= cutoff:
+            form4_filings.append({
+                "date": dates[i],
+                "accession": accessions[i].replace("-", ""),
+                "doc": descriptions[i] if i < len(descriptions) else "",
+            })
+
+    if not form4_filings:
+        return []
+
+    transactions = []
+    # Leggi al massimo i 20 filing più recenti per evitare troppe chiamate
+    for filing in form4_filings[:20]:
+        try:
+            acc = filing["accession"]
+            acc_fmt = f"{acc[:10]}-{acc[10:12]}-{acc[12:]}"
+            xml_url = f"https://www.sec.gov/Archives/edgar/data/{cik_clean}/{acc}/{filing['doc']}"
+            rx = requests.get(xml_url, timeout=8,
+                              headers={"User-Agent": "OptionsFlowScanner scanner@options.com"})
+            if rx.status_code != 200:
+                continue
+
+            # Parse XML Form 4
+            import xml.etree.ElementTree as ET
+            root = ET.fromstring(rx.text)
+
+            # Nome e ruolo insider
+            rp = root.find(".//reportingOwner")
+            name = ""
+            role = ""
+            if rp is not None:
+                name_el = rp.find(".//rptOwnerName")
+                if name_el is not None:
+                    name = name_el.text or ""
+                role_el = rp.find(".//officerTitle")
+                if role_el is not None:
+                    role = role_el.text or ""
+                if not role:
+                    is_dir = rp.find(".//isDirector")
+                    is_off = rp.find(".//isOfficer")
+                    is_10pct = rp.find(".//isTenPercentOwner")
+                    if is_dir is not None and is_dir.text == "1":
+                        role = "Director"
+                    elif is_off is not None and is_off.text == "1":
+                        role = "Officer"
+                    elif is_10pct is not None and is_10pct.text == "1":
+                        role = "10% Owner"
+
+            # Transazioni non-derivative (azioni ordinarie)
+            for txn in root.findall(".//nonDerivativeTransaction"):
+                try:
+                    date_el    = txn.find(".//transactionDate/value")
+                    code_el    = txn.find(".//transactionCode")
+                    shares_el  = txn.find(".//transactionShares/value")
+                    price_el   = txn.find(".//transactionPricePerShare/value")
+                    owned_el   = txn.find(".//sharesOwnedFollowingTransaction/value")
+
+                    txn_date   = date_el.text  if date_el  is not None else filing["date"]
+                    txn_code   = code_el.text  if code_el  is not None else "?"
+                    shares     = float(shares_el.text) if shares_el is not None and shares_el.text else 0
+                    price      = float(price_el.text)  if price_el  is not None and price_el.text  else 0
+                    owned      = float(owned_el.text)  if owned_el  is not None and owned_el.text  else 0
+                    value      = round(shares * price, 0)
+
+                    # Decodifica tipo transazione
+                    TYPE_MAP = {
+                        "P": "🟢 Acquisto",  "S": "🔴 Vendita",
+                        "A": "🎁 Award",     "F": "🧾 Tax withhold",
+                        "M": "⚙️ Exercise",  "G": "🎁 Gift",
+                        "D": "📤 Disposition","I": "📥 Indirect",
+                        "J": "⚖️ Other",
+                    }
+                    txn_type = TYPE_MAP.get(txn_code, f"❓ {txn_code}")
+
+                    if shares > 0:
+                        transactions.append({
+                            "Data":     txn_date,
+                            "Insider":  name.title(),
+                            "Ruolo":    role,
+                            "Tipo":     txn_type,
+                            "Azioni":   int(shares),
+                            "Prezzo":   round(price, 2),
+                            "Valore $": int(value),
+                            "Owned":    int(owned),
+                            "_code":    txn_code,
+                        })
+                except Exception:
+                    continue
+
+        except Exception:
+            continue
+
+    # Ordina per data decrescente
+    transactions.sort(key=lambda x: x["Data"], reverse=True)
+    return transactions
+
+
+def render_insider_section():
+    """Sezione Insider Trading — chiamata dalla tab dedicata."""
+    st.subheader("🕵️ Insider Trading — Form 4 SEC")
+    st.caption("Fonte: SEC EDGAR (dati pubblici) · Aggiornamento: entro 2 gg lavorativi dalla transazione")
+
+    col_a, col_b, col_c = st.columns([2, 1, 1])
+    with col_a:
+        ins_ticker = st.text_input("Ticker", "GOOGL", key="ins_ticker").upper().strip()
+    with col_b:
+        ins_days = st.selectbox("Periodo", [30, 60, 90, 180], index=1, key="ins_days")
+    with col_c:
+        ins_type = st.radio("Tipo", ["Tutti", "Solo acquisti", "Solo vendite"],
+                            key="ins_type", horizontal=False)
+
+    if st.button("🔍 Carica Insider Data", key="ins_search", type="primary"):
+        with st.spinner(f"📡 Scaricando Form 4 per {ins_ticker}..."):
+            txns = get_insider_transactions(ins_ticker, days_back=ins_days)
+
+        if not txns:
+            st.warning(f"⚠️ Nessun Form 4 trovato per **{ins_ticker}** negli ultimi {ins_days} giorni.")
+            st.info("💡 Possibili cause: ticker non presente nel CIK statico, o nessuna transazione nel periodo.")
+            return
+
+        df_ins = pd.DataFrame(txns)
+
+        # Filtro tipo
+        if ins_type == "Solo acquisti":
+            df_ins = df_ins[df_ins["_code"] == "P"]
+        elif ins_type == "Solo vendite":
+            df_ins = df_ins[df_ins["_code"] == "S"]
+
+        df_ins = df_ins.drop(columns=["_code"])
+
+        if df_ins.empty:
+            st.warning("Nessuna transazione del tipo selezionato nel periodo.")
+            return
+
+        # ── KPI SUMMARY ──
+        buys  = df_ins[df_ins["Tipo"].str.contains("Acquisto")]
+        sells = df_ins[df_ins["Tipo"].str.contains("Vendita")]
+        buy_val  = buys["Valore $"].sum()
+        sell_val = sells["Valore $"].sum()
+
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("📋 Transazioni", len(df_ins))
+        k2.metric("🟢 Acquisti", f"{len(buys)} — ${buy_val/1_000:.0f}K" if buy_val < 1_000_000
+                  else f"{len(buys)} — ${buy_val/1_000_000:.1f}M")
+        k3.metric("🔴 Vendite", f"{len(sells)} — ${sell_val/1_000:.0f}K" if sell_val < 1_000_000
+                  else f"{len(sells)} — ${sell_val/1_000_000:.1f}M")
+        net = buy_val - sell_val
+        net_str = (f"+${net/1_000_000:.1f}M" if net >= 1_000_000
+                   else f"+${net/1_000:.0f}K" if net >= 0
+                   else f"-${abs(net)/1_000_000:.1f}M" if abs(net) >= 1_000_000
+                   else f"-${abs(net)/1_000:.0f}K")
+        k4.metric("⚖️ Net Flow", net_str,
+                  delta="BULLISH 🟢" if net > 0 else "BEARISH 🔴")
+
+        st.divider()
+
+        # ── TABELLA COLORATA ──
+        def color_tipo(val):
+            if "Acquisto" in str(val):
+                return "background-color:#1a3a1a; color:#00ff88; font-weight:bold"
+            if "Vendita" in str(val):
+                return "background-color:#3a0a0a; color:#ff4444; font-weight:bold"
+            return "color:#aaaaaa"
+
+        styled = (
+            df_ins.style
+            .map(color_tipo, subset=["Tipo"])
+            .format({
+                "Azioni":   "{:,}",
+                "Prezzo":   "${:.2f}",
+                "Valore $": "${:,}",
+                "Owned":    "{:,}",
+            })
+        )
+
+        st.dataframe(styled, use_container_width=True, hide_index=True)
+
+        # ── ALERT se acquisto significativo ──
+        big_buys = buys[buys["Valore $"] >= 500_000]
+        if not big_buys.empty:
+            st.warning(
+                f"🚨 **INSIDER BUY ALERT** — {len(big_buys)} acquisto/i superiori a $500K rilevati su {ins_ticker}!"
+            )
+            for _, row in big_buys.iterrows():
+                st.markdown(
+                    f"📌 **{row['Insider']}** ({row['Ruolo']}) — "
+                    f"acquistato **{row['Azioni']:,} azioni** @ ${row['Prezzo']:.2f} "
+                    f"= **${row['Valore $']:,}** il {row['Data']}"
+                )
+
+        # ── NOTE OPERATIVE ──
+        with st.expander("ℹ️ Come leggere i dati insider", expanded=False):
+            st.markdown("""
+**Codici transazione:**
+- 🟢 **Acquisto (P)** — acquisto diretto sul mercato aperto → segnale bullish forte
+- 🔴 **Vendita (S)** — vendita sul mercato aperto → attenzione (ma può essere diversificazione)
+- 🎁 **Award (A)** — azioni assegnate come compensazione → non direzionale
+- ⚙️ **Exercise (M)** — esercizio stock option → spesso seguito da vendita
+- 🧾 **Tax withhold (F)** — trattenuta fiscale → non direzionale
+
+**Regola pratica:**
+Un CEO/CFO che **compra sul mercato aperto** con denaro proprio è il segnale più forte.
+Le vendite vanno sempre contestualizzate: molte sono pianificate con piani 10b5-1.
+
+**Fonte:** SEC EDGAR Form 4 — deposito obbligatorio entro 2 giorni lavorativi dalla transazione.
+""")
 
 # =========================
 # POLYGON — PREZZO SOTTOSTANTE
@@ -983,7 +1271,8 @@ with st.sidebar:
 # =========================
 st.title("🔥 Options Flow Scanner PRO by Ugo Fortezze 🔥")
 st.caption("Powered by Polygon.io — Greeks | Ask Hit | Sweep | Storico Cluster  •  v6.4")
-
+    tab_scanner, tab_insider = st.tabs(["📡 Options Flow Scanner", "🕵️ Insider Trading"])
+with tab_scanner:
 # ── RIEPILOGO FILTRI ATTIVI (sempre visibile, aggiornato in tempo reale) ──
 def _fk(v):
     if v >= 1_000_000: return f"{v/1_000_000:.1f}M"
@@ -1462,3 +1751,5 @@ st.caption(
     "L'analisi finale (grafico, contesto macro, greche) va completata su IBKR. "
     "Nessun ordine viene eseguito automaticamente. — v6.4"
 )
+with tab_insider:
+    render_insider_section()
