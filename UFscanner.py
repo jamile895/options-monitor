@@ -607,13 +607,62 @@ def render_insider_section():
         ins_type = st.radio("Tipo", ["Tutti", "Solo acquisti", "Solo vendite"],
                             key="ins_type", horizontal=False)
 
+    debug_mode = st.checkbox("🔧 Mostra diagnostica", value=False, key="ins_debug")
+
     if st.button("🔍 Carica Insider Data", key="ins_search", type="primary"):
+
+        # ── DIAGNOSTICA OPZIONALE ──
+        if debug_mode:
+            st.markdown("---")
+            st.markdown("**🔧 Diagnostica SEC EDGAR:**")
+            cik_dbg = get_cik_for_ticker(ins_ticker)
+            st.write(f"1️⃣ CIK risolto: `{cik_dbg}`")
+            if not cik_dbg:
+                st.error("❌ CIK non trovato — ticker non in dizionario e lookup fallito")
+            else:
+                import requests as _req
+                SEC_H = {"User-Agent": "Options Flow Scanner Pro info@optionsflowpro.com"}
+                sub_url = f"https://data.sec.gov/submissions/CIK{str(cik_dbg).zfill(10)}.json"
+                st.write(f"2️⃣ URL: `{sub_url}`")
+                try:
+                    rs = _req.get(sub_url, timeout=10, headers=SEC_H)
+                    st.write(f"   Status submissions: `{rs.status_code}`")
+                    if rs.status_code == 200:
+                        recent = rs.json().get("filings", {}).get("recent", {})
+                        forms  = recent.get("form", [])
+                        dates  = recent.get("filingDate", [])
+                        accs   = recent.get("accessionNumber", [])
+                        docs   = recent.get("primaryDocument", [])
+                        cutoff_dbg = (datetime.today() - timedelta(days=ins_days)).strftime("%Y-%m-%d")
+                        form4_dbg  = [(forms[i], dates[i], accs[i], docs[i])
+                                      for i in range(len(forms))
+                                      if forms[i] in ("4","4/A") and dates[i] >= cutoff_dbg]
+                        st.write(f"   Form 4 nel periodo: `{len(form4_dbg)}`")
+                        if form4_dbg:
+                            f0 = form4_dbg[0]
+                            acc0  = f0[2].replace("-","")
+                            acc_d = f"{acc0[:10]}-{acc0[10:12]}-{acc0[12:]}"
+                            cik_c = str(cik_dbg).lstrip("0")
+                            xml_url = f"https://www.sec.gov/Archives/edgar/data/{cik_c}/{acc_d}/{f0[3]}"
+                            st.write(f"3️⃣ URL XML: `{xml_url}`")
+                            rx = _req.get(xml_url, timeout=8, headers=SEC_H)
+                            st.write(f"   Status XML: `{rx.status_code}`")
+                            if rx.status_code == 200:
+                                st.code(rx.text[:400], language="xml")
+                            else:
+                                st.error(f"❌ XML status {rx.status_code}: {rx.text[:200]}")
+                    else:
+                        st.error(f"❌ Submissions status {rs.status_code}: {rs.text[:200]}")
+                except Exception as ex_dbg:
+                    st.error(f"❌ Eccezione: {ex_dbg}")
+            st.markdown("---")
+
         with st.spinner(f"📡 Scaricando Form 4 per {ins_ticker}..."):
             txns = get_insider_transactions(ins_ticker, days_back=ins_days)
 
         if not txns:
             st.warning(f"⚠️ Nessun Form 4 trovato per **{ins_ticker}** negli ultimi {ins_days} giorni.")
-            st.info("💡 Possibili cause: ticker non presente nel CIK statico, o nessuna transazione nel periodo.")
+            st.info("💡 Attiva la checkbox 🔧 Mostra diagnostica per vedere dove si blocca.")
             return
 
         df_ins = pd.DataFrame(txns)
@@ -1706,7 +1755,7 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
     st.caption(
         "⚠️ Questo tool è uno screener di primo livello. "
         "L'analisi finale (grafico, contesto macro, greche) va completata su IBKR. "
-        "Nessun ordine viene eseguito automaticamente. — v6.6"
+        "Nessun ordine viene eseguito automaticamente. — v6.7"
     )
 
 # =========================
