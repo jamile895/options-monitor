@@ -57,8 +57,8 @@ st.set_page_config(layout="wide", page_title="Options Flow Scanner PRO")
 # =========================
 # STORICO SCANSIONI
 # =========================
-HISTORY_COLS  = ["date","ticker","strike","expiration","type","flow","voi","ask_hit","sweep","iv"]
-WATCHLIST_COLS = ["ticker","strike","expiration","type","note","added"]
+HISTORY_COLS           = ["date","ticker","strike","expiration","type","flow","voi","ask_hit","sweep","iv"]
+WATCHLIST_COLS         = ["ticker","strike","expiration","type","note","added"]
 WATCHLIST_HISTORY_COLS = ["date","ticker","strike","expiration","type","mid","voi","iv","volume","underlying"]
 
 @st.cache_data(ttl=300)
@@ -446,42 +446,28 @@ def dte_label(dmin, dmax):
     if span >= 150: return "🟢 WIDE"
     elif span >= 60: return "🟡 MED"
     else:            return "🔴 NARROW"
-        # =========================
+
+# =========================
 # SEC EDGAR — INSIDER TRADING (Form 4)
 # =========================
 
-# Mappa ticker → CIK (cache statica per i big cap più usati)
 TICKER_TO_CIK = {
     "AAPL": "0000320193", "MSFT": "0000789019", "GOOGL": "0001652044",
-    "GOOG":  "0001652044", "AMZN": "0001018724", "META":  "0001326801",
-    "NVDA":  "0001045810", "TSLA": "0001318605", "SPY":   "0000884394",
-    "QQQ":   "0001067839", "NFLX": "0001065280", "AMD":   "0000002488",
-    "INTC":  "0000050863", "CRM":  "0001108524", "ORCL":  "0001341439",
-    "UBER":  "0001543151", "LYFT": "0001759509", "BABA":  "0001577552",
-    "JPM":   "0000019617", "BAC":  "0000070858", "WMT":   "0000104169",
-    "DIS":   "0001001039", "V":    "0001403161", "MA":    "0001141391",
+    "GOOG": "0001652044", "AMZN": "0001018724", "META":  "0001326801",
+    "NVDA": "0001045810", "TSLA": "0001318605", "SPY":   "0000884394",
+    "QQQ":  "0001067839", "NFLX": "0001065280", "AMD":   "0000002488",
+    "INTC": "0000050863", "CRM":  "0001108524", "ORCL":  "0001341439",
+    "UBER": "0001543151", "LYFT": "0001759509", "BABA":  "0001577552",
+    "JPM":  "0000019617", "BAC":  "0000070858", "WMT":   "0000104169",
+    "DIS":  "0001001039", "V":    "0001403161", "MA":    "0001141391",
+    "CMG":  "0001058090", "SMCI": "0001375365", "PLTR":  "0001321655",
+    "RKLB": "0001819994",
 }
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_cik_for_ticker(ticker: str) -> str | None:
-    """Risolve ticker → CIK via SEC EDGAR company search."""
-    # Prova cache statica prima
     if ticker.upper() in TICKER_TO_CIK:
         return TICKER_TO_CIK[ticker.upper()]
-    # Fallback: ricerca dinamica
-    try:
-        url = "https://efts.sec.gov/LATEST/search-index"
-        params = {"q": f'"{ticker}"', "dateRange": "custom",
-                  "startdt": "2020-01-01", "forms": "10-K", "hits.hits._source": "period_of_report,entity_name,file_date"}
-        r = requests.get(url, params=params, timeout=8,
-                         headers={"User-Agent": "OptionsFlowScanner scanner@options.com"})
-        if r.status_code == 200:
-            hits = r.json().get("hits", {}).get("hits", [])
-            if hits:
-                return hits[0].get("_source", {}).get("entity_id") or None
-    except Exception:
-        pass
-    # Secondo fallback: company_facts endpoint
     try:
         url2 = f"https://www.sec.gov/cgi-bin/browse-edgar?company=&CIK={ticker}&type=4&dateb=&owner=include&count=1&search_text=&action=getcompany&output=atom"
         r2 = requests.get(url2, timeout=8,
@@ -497,10 +483,6 @@ def get_cik_for_ticker(ticker: str) -> str | None:
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_insider_transactions(ticker: str, days_back: int = 90) -> list[dict]:
-    """
-    Scarica le ultime transazioni Form 4 per un ticker da SEC EDGAR.
-    Restituisce lista di dict con: name, role, date, type, shares, price, value.
-    """
     cik = get_cik_for_ticker(ticker)
     if not cik:
         return []
@@ -509,7 +491,6 @@ def get_insider_transactions(ticker: str, days_back: int = 90) -> list[dict]:
     cutoff = (datetime.today() - timedelta(days=days_back)).strftime("%Y-%m-%d")
 
     try:
-        # Recupera submissions (include lista filing recenti)
         url = f"https://data.sec.gov/submissions/CIK{str(cik).zfill(10)}.json"
         r = requests.get(url, timeout=10,
                          headers={"User-Agent": "OptionsFlowScanner scanner@options.com"})
@@ -519,84 +500,72 @@ def get_insider_transactions(ticker: str, days_back: int = 90) -> list[dict]:
     except Exception:
         return []
 
-    recent = data.get("filings", {}).get("recent", {})
-    forms      = recent.get("form", [])
-    dates      = recent.get("filingDate", [])
-    accessions = recent.get("accessionNumber", [])
+    recent       = data.get("filings", {}).get("recent", {})
+    forms        = recent.get("form", [])
+    dates        = recent.get("filingDate", [])
+    accessions   = recent.get("accessionNumber", [])
     descriptions = recent.get("primaryDocument", [])
 
-    # Filtra solo Form 4 recenti
     form4_filings = []
     for i, f in enumerate(forms):
         if f in ("4", "4/A") and dates[i] >= cutoff:
             form4_filings.append({
-                "date": dates[i],
+                "date":      dates[i],
                 "accession": accessions[i].replace("-", ""),
-                "doc": descriptions[i] if i < len(descriptions) else "",
+                "doc":       descriptions[i] if i < len(descriptions) else "",
             })
 
     if not form4_filings:
         return []
 
     transactions = []
-    # Leggi al massimo i 20 filing più recenti per evitare troppe chiamate
     for filing in form4_filings[:20]:
         try:
-            acc = filing["accession"]
-            acc_fmt = f"{acc[:10]}-{acc[10:12]}-{acc[12:]}"
+            acc     = filing["accession"]
             xml_url = f"https://www.sec.gov/Archives/edgar/data/{cik_clean}/{acc}/{filing['doc']}"
             rx = requests.get(xml_url, timeout=8,
                               headers={"User-Agent": "OptionsFlowScanner scanner@options.com"})
             if rx.status_code != 200:
                 continue
 
-            # Parse XML Form 4
             import xml.etree.ElementTree as ET
             root = ET.fromstring(rx.text)
 
-            # Nome e ruolo insider
-            rp = root.find(".//reportingOwner")
+            rp   = root.find(".//reportingOwner")
             name = ""
             role = ""
             if rp is not None:
                 name_el = rp.find(".//rptOwnerName")
-                if name_el is not None:
-                    name = name_el.text or ""
+                if name_el is not None: name = name_el.text or ""
                 role_el = rp.find(".//officerTitle")
-                if role_el is not None:
-                    role = role_el.text or ""
+                if role_el is not None: role = role_el.text or ""
                 if not role:
-                    is_dir = rp.find(".//isDirector")
-                    is_off = rp.find(".//isOfficer")
+                    is_dir   = rp.find(".//isDirector")
+                    is_off   = rp.find(".//isOfficer")
                     is_10pct = rp.find(".//isTenPercentOwner")
-                    if is_dir is not None and is_dir.text == "1":
-                        role = "Director"
-                    elif is_off is not None and is_off.text == "1":
-                        role = "Officer"
-                    elif is_10pct is not None and is_10pct.text == "1":
-                        role = "10% Owner"
+                    if is_dir   is not None and is_dir.text   == "1": role = "Director"
+                    elif is_off is not None and is_off.text   == "1": role = "Officer"
+                    elif is_10pct is not None and is_10pct.text == "1": role = "10% Owner"
 
-            # Transazioni non-derivative (azioni ordinarie)
             for txn in root.findall(".//nonDerivativeTransaction"):
                 try:
-                    date_el    = txn.find(".//transactionDate/value")
-                    code_el    = txn.find(".//transactionCode")
-                    shares_el  = txn.find(".//transactionShares/value")
-                    price_el   = txn.find(".//transactionPricePerShare/value")
-                    owned_el   = txn.find(".//sharesOwnedFollowingTransaction/value")
+                    date_el   = txn.find(".//transactionDate/value")
+                    code_el   = txn.find(".//transactionCode")
+                    shares_el = txn.find(".//transactionShares/value")
+                    price_el  = txn.find(".//transactionPricePerShare/value")
+                    owned_el  = txn.find(".//sharesOwnedFollowingTransaction/value")
 
-                    txn_date   = date_el.text  if date_el  is not None else filing["date"]
-                    txn_code   = code_el.text  if code_el  is not None else "?"
-                    shares     = float(shares_el.text) if shares_el is not None and shares_el.text else 0
-                    price      = float(price_el.text)  if price_el  is not None and price_el.text  else 0
-                    owned      = float(owned_el.text)  if owned_el  is not None and owned_el.text  else 0
-                    value      = round(shares * price, 0)
+                    txn_date  = date_el.text  if date_el  is not None else filing["date"]
+                    txn_code  = code_el.text  if code_el  is not None else "?"
+                    shares    = float(shares_el.text) if shares_el is not None and shares_el.text else 0
+                    price     = float(price_el.text)  if price_el  is not None and price_el.text  else 0
+                    owned     = float(owned_el.text)  if owned_el  is not None and owned_el.text  else 0
+                    value     = round(shares * price, 0)
 
-                    # Decodifica tipo transazione
                     TYPE_MAP = {
-                        "P": "🟢 Acquisto",  "S": "🔴 Vendita",
-                        "A": "🎁 Award",     "F": "🧾 Tax withhold",
-                        "M": "⚙️ Exercise",  "G": "🎁 Gift",
+                        "P": "🟢 Acquisto",   "S": "🔴 Vendita",
+                        "A": "🎁 Award",      "F": "🧾 Tax withhold",
+                        "M": "⚙️ Exercise",   "G": "🎁 Gift",
                         "D": "📤 Disposition","I": "📥 Indirect",
                         "J": "⚖️ Other",
                     }
@@ -616,17 +585,14 @@ def get_insider_transactions(ticker: str, days_back: int = 90) -> list[dict]:
                         })
                 except Exception:
                     continue
-
         except Exception:
             continue
 
-    # Ordina per data decrescente
     transactions.sort(key=lambda x: x["Data"], reverse=True)
     return transactions
 
 
 def render_insider_section():
-    """Sezione Insider Trading — chiamata dalla tab dedicata."""
     st.subheader("🕵️ Insider Trading — Form 4 SEC")
     st.caption("Fonte: SEC EDGAR (dati pubblici) · Aggiornamento: entro 2 gg lavorativi dalla transazione")
 
@@ -650,7 +616,6 @@ def render_insider_section():
 
         df_ins = pd.DataFrame(txns)
 
-        # Filtro tipo
         if ins_type == "Solo acquisti":
             df_ins = df_ins[df_ins["_code"] == "P"]
         elif ins_type == "Solo vendite":
@@ -662,9 +627,8 @@ def render_insider_section():
             st.warning("Nessuna transazione del tipo selezionato nel periodo.")
             return
 
-        # ── KPI SUMMARY ──
-        buys  = df_ins[df_ins["Tipo"].str.contains("Acquisto")]
-        sells = df_ins[df_ins["Tipo"].str.contains("Vendita")]
+        buys     = df_ins[df_ins["Tipo"].str.contains("Acquisto")]
+        sells    = df_ins[df_ins["Tipo"].str.contains("Vendita")]
         buy_val  = buys["Valore $"].sum()
         sell_val = sells["Valore $"].sum()
 
@@ -675,8 +639,8 @@ def render_insider_section():
         k3.metric("🔴 Vendite", f"{len(sells)} — ${sell_val/1_000:.0f}K" if sell_val < 1_000_000
                   else f"{len(sells)} — ${sell_val/1_000_000:.1f}M")
         net = buy_val - sell_val
-        net_str = (f"+${net/1_000_000:.1f}M" if net >= 1_000_000
-                   else f"+${net/1_000:.0f}K" if net >= 0
+        net_str = (f"+${net/1_000_000:.1f}M"       if net >= 1_000_000
+                   else f"+${net/1_000:.0f}K"       if net >= 0
                    else f"-${abs(net)/1_000_000:.1f}M" if abs(net) >= 1_000_000
                    else f"-${abs(net)/1_000:.0f}K")
         k4.metric("⚖️ Net Flow", net_str,
@@ -684,7 +648,6 @@ def render_insider_section():
 
         st.divider()
 
-        # ── TABELLA COLORATA ──
         def color_tipo(val):
             if "Acquisto" in str(val):
                 return "background-color:#1a3a1a; color:#00ff88; font-weight:bold"
@@ -702,10 +665,8 @@ def render_insider_section():
                 "Owned":    "{:,}",
             })
         )
-
         st.dataframe(styled, use_container_width=True, hide_index=True)
 
-        # ── ALERT se acquisto significativo ──
         big_buys = buys[buys["Valore $"] >= 500_000]
         if not big_buys.empty:
             st.warning(
@@ -718,7 +679,6 @@ def render_insider_section():
                     f"= **${row['Valore $']:,}** il {row['Data']}"
                 )
 
-        # ── NOTE OPERATIVE ──
         with st.expander("ℹ️ Come leggere i dati insider", expanded=False):
             st.markdown("""
 **Codici transazione:**
@@ -775,7 +735,7 @@ def get_short_interest(ticker: str) -> dict:
                 float_shares = fi.get("float_shares") or fi.get("shares_outstanding")
                 avg_volume   = fi.get("average_daily_volume")
                 if short_shares and float_shares and float_shares > 0:
-                    result["short_pct"] = round((short_shares / float_shares) * 100, 1)
+                    result["short_pct"]    = round((short_shares / float_shares) * 100, 1)
                     result["short_shares"] = int(short_shares)
                 if short_shares and avg_volume and avg_volume > 0:
                     result["days_to_cover"] = round(short_shares / avg_volume, 1)
@@ -801,10 +761,10 @@ def get_dark_pool_pct(ticker: str) -> float | None:
         r = requests.get(url, params={"apiKey": POLYGON_API_KEY}, timeout=8)
         if r.status_code == 200:
             data = r.json().get("ticker", {})
-            day = data.get("day", {})
-            total_vol  = day.get("v") or 0
-            otc_vol    = day.get("otcVolume") or 0
-            dark_vol   = day.get("darkVolume") or otc_vol or 0
+            day       = data.get("day", {})
+            total_vol = day.get("v") or 0
+            otc_vol   = day.get("otcVolume") or 0
+            dark_vol  = day.get("darkVolume") or otc_vol or 0
             if total_vol > 0 and dark_vol > 0:
                 return round((dark_vol / total_vol) * 100, 1)
     except Exception:
@@ -1062,7 +1022,6 @@ def scan_ticker(ticker: str) -> pd.DataFrame:
         elif dp_pct >= 30: dp_str = f"  |  🔵 Dark Pool: **{dp_pct}%** (accumulo istituzionale)"
         else:              dp_str = f"  |  Dark Pool: {dp_pct}%"
     st.caption(f"Put/Call Ratio: **{pc}** | CALL vol: {cv:,} | PUT vol: {pv:,} | Bias: {bias_label}{dp_str}")
-
     si_data = get_short_interest(ticker)
     si_parts = []
     if si_data.get("short_pct") is not None:
@@ -1158,12 +1117,11 @@ PRESETS = {
     },
 }
 
-APP_VERSION = "6.4"
+APP_VERSION = "6.5"
 
 with st.sidebar:
     st.markdown("## 🔥 Options Flow Scanner")
 
-    # Modalità
     mode = st.radio(
         "**Modalità**",
         ["SMALL CAP", "MID CAP", "BIG CAP", "SNIPER", "HOT ONLY", "SPY SWING"],
@@ -1172,7 +1130,6 @@ with st.sidebar:
     preset = PRESETS[mode]
     st.caption(f"ℹ️ {preset['desc']}")
 
-    # Reset preset quando cambia modalità o versione
     if ("last_mode" not in st.session_state or
         st.session_state.get("last_mode") != mode or
         st.session_state.get("app_version") != APP_VERSION):
@@ -1190,7 +1147,6 @@ with st.sidebar:
         st.session_state["ask_hit_min"]     = float(preset["ask_hit_min"])
         st.session_state["flow_min"]        = int(preset["flow_min"])
 
-    # ── VOLUME & VOI (2 colonne) ──
     _c1, _c2 = st.columns(2)
     with _c1:
         vol_lbl = width_label(st.session_state["volume_min"], 0, 50000, invert=True)
@@ -1201,7 +1157,6 @@ with st.sidebar:
         voi_min = st.slider(f"VOI min {voi_lbl}", 0.0, 20.0,
                             st.session_state["voi_min"], step=0.1, key="voi_min")
 
-    # ── DTE (2 colonne) ──
     dte_lbl = dte_label(st.session_state["dte_min"], st.session_state["dte_max"])
     st.caption(f"📅 DTE {dte_lbl}")
     _c3, _c4 = st.columns(2)
@@ -1210,7 +1165,6 @@ with st.sidebar:
     with _c4:
         dte_max = st.slider("DTE max", 1, 365, st.session_state["dte_max"], key="dte_max")
 
-    # ── STRIKE % (2 colonne) ──
     strike_span = st.session_state["strike_dist_max"] - st.session_state["strike_dist_min"]
     sk_lbl = "🟢 WIDE" if strike_span >= 15 else ("🟡 MED" if strike_span >= 7 else "🔴 NARROW")
     st.caption(f"🎯 Strike % {sk_lbl}")
@@ -1223,7 +1177,6 @@ with st.sidebar:
         strike_dist_max = st.slider("Strike % max", 1, 50, st.session_state["strike_dist_max"],
                                     key="strike_dist_max")
 
-    # ── DELTA (2 colonne) ──
     delta_span = st.session_state["delta_max"] - st.session_state["delta_min"]
     dl_lbl = "🟢 WIDE" if delta_span >= 0.6 else ("🟡 MED" if delta_span >= 0.3 else "🔴 NARROW")
     st.caption(f"Δ Delta {dl_lbl}  (0.05=OTM · 0.50=ATM · 0.90=ITM)")
@@ -1235,7 +1188,6 @@ with st.sidebar:
         delta_max = st.slider("Δ max", 0.0, 1.0,
                               st.session_state["delta_max"], step=0.01, key="delta_max")
 
-    # ── SPREAD & FLOW (2 colonne) ──
     _c9, _c10 = st.columns(2)
     with _c9:
         spread_lbl = width_label(st.session_state["spread_max"], 0.01, 20.0)
@@ -1247,7 +1199,6 @@ with st.sidebar:
                              st.session_state["flow_min"], step=50000, key="flow_min",
                              help=">$500K = istituzionale. >$1M = whale.")
 
-    # ── ASK HIT (full width) ──
     ask_hit_lbl = width_label(st.session_state["ask_hit_min"], 0.0, 100.0, invert=True)
     ask_hit_min = st.slider(
         f"Ask Hit % min {ask_hit_lbl}",
@@ -1255,14 +1206,12 @@ with st.sidebar:
         help="≥55% = buyer aggressivo. ≤30% = seller."
     )
 
-    # ── TIPO OPZIONE & TELEGRAM ──
     _c11, _c12 = st.columns([2, 1])
     with _c11:
         option_type = st.radio("Tipo", ["CALL", "PUT", "BOTH"], horizontal=True)
     with _c12:
         send_telegram = st.checkbox("📲 TG", value=False, help="Attiva Telegram Alerts")
 
-    # ── TICKER INPUT & SCAN BUTTON ──
     tickers_input = st.text_input("🔍 Ticker (virgola)", "SPY")
     scan_clicked = st.button("🚀 SCANSIONA", type="primary", use_container_width=True)
 
@@ -1270,50 +1219,56 @@ with st.sidebar:
 # MAIN AREA — HEADER
 # =========================
 st.title("🔥 Options Flow Scanner PRO by Ugo Fortezze 🔥")
-st.caption("Powered by Polygon.io — Greeks | Ask Hit | Sweep | Storico Cluster  •  v6.4")
-    tab_scanner, tab_insider = st.tabs(["📡 Options Flow Scanner", "🕵️ Insider Trading"])
+st.caption("Powered by Polygon.io — Greeks | Ask Hit | Sweep | Storico Cluster | Insider Trading  •  v6.5")
+
+# =========================
+# TAB PRINCIPALE
+# =========================
+tab_scanner, tab_insider = st.tabs(["📡 Options Flow Scanner", "🕵️ Insider Trading"])
+
 with tab_scanner:
-# ── RIEPILOGO FILTRI ATTIVI (sempre visibile, aggiornato in tempo reale) ──
-def _fk(v):
-    if v >= 1_000_000: return f"{v/1_000_000:.1f}M"
-    if v >= 1_000:     return f"{v/1_000:.0f}K"
-    return str(int(v))
 
-_vol   = st.session_state.get("volume_min", 0)
-_voi   = st.session_state.get("voi_min", 0.0)
-_dmin  = st.session_state.get("dte_min", 0)
-_dmax  = st.session_state.get("dte_max", 365)
-_skmin = st.session_state.get("strike_dist_min", 0)
-_skmax = st.session_state.get("strike_dist_max", 50)
-_dmin2 = st.session_state.get("delta_min", 0.0)
-_dmax2 = st.session_state.get("delta_max", 1.0)
-_sprd  = st.session_state.get("spread_max", 20.0)
-_flow  = st.session_state.get("flow_min", 0)
-_ask   = st.session_state.get("ask_hit_min", 0.0)
-_mode  = st.session_state.get("mode_radio", "—")
+    # ── RIEPILOGO FILTRI ATTIVI ──
+    def _fk(v):
+        if v >= 1_000_000: return f"{v/1_000_000:.1f}M"
+        if v >= 1_000:     return f"{v/1_000:.0f}K"
+        return str(int(v))
 
-st.info(
-    f"**{_mode}** · "
-    f"Vol≥{_vol:,} · VOI≥{_voi:.1f} · "
-    f"DTE {_dmin}–{_dmax} · "
-    f"Strike {_skmin}–{_skmax}% · "
-    f"Δ {_dmin2:.2f}–{_dmax2:.2f} · "
-    f"Spread≤{_sprd:.2f} · "
-    f"Flow≥{_fk(_flow)} · "
-    f"AskHit≥{int(_ask)}%"
-)
+    _vol   = st.session_state.get("volume_min", 0)
+    _voi   = st.session_state.get("voi_min", 0.0)
+    _dmin  = st.session_state.get("dte_min", 0)
+    _dmax  = st.session_state.get("dte_max", 365)
+    _skmin = st.session_state.get("strike_dist_min", 0)
+    _skmax = st.session_state.get("strike_dist_max", 50)
+    _dmin2 = st.session_state.get("delta_min", 0.0)
+    _dmax2 = st.session_state.get("delta_max", 1.0)
+    _sprd  = st.session_state.get("spread_max", 20.0)
+    _flow  = st.session_state.get("flow_min", 0)
+    _ask   = st.session_state.get("ask_hit_min", 0.0)
+    _mode  = st.session_state.get("mode_radio", "—")
 
-_gs_client = get_gsheet_client()
-if _gs_client:
-    st.caption("📊 Google Sheets: ✅ connesso")
-else:
-    st.caption("📊 Google Sheets: ⚠️ non connesso — storico salvato localmente")
+    st.info(
+        f"**{_mode}** · "
+        f"Vol≥{_vol:,} · VOI≥{_voi:.1f} · "
+        f"DTE {_dmin}–{_dmax} · "
+        f"Strike {_skmin}–{_skmax}% · "
+        f"Δ {_dmin2:.2f}–{_dmax2:.2f} · "
+        f"Spread≤{_sprd:.2f} · "
+        f"Flow≥{_fk(_flow)} · "
+        f"AskHit≥{int(_ask)}%"
+    )
 
-# =========================
-# LEGENDA / MANUALE IN-APP
-# =========================
-with st.expander("📖 Manuale — Options Flow Scanner PRO v6.3"):
-    st.markdown("""
+    _gs_client = get_gsheet_client()
+    if _gs_client:
+        st.caption("📊 Google Sheets: ✅ connesso")
+    else:
+        st.caption("📊 Google Sheets: ⚠️ non connesso — storico salvato localmente")
+
+    # =========================
+    # LEGENDA / MANUALE IN-APP
+    # =========================
+    with st.expander("📖 Manuale — Options Flow Scanner PRO v6.5"):
+        st.markdown("""
 ## 🎯 Obiettivo del Tool
 Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volumi anomali rispetto all'open interest, con focus su **smart money** e **accumulo balena**. Nessuna esecuzione automatica — il controllo finale è sempre tuo.
 
@@ -1340,34 +1295,275 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
 - Nessun ordine viene eseguito automaticamente.
 """)
 
-# =========================
-# STORICO
-# =========================
-with st.expander("📅 Storico Scansioni — Tracker Accumulo 🐋"):
-    history = load_history()
-    if not history:
-        st.info("Nessuna scansione salvata. Esegui una scansione per iniziare a costruire lo storico.")
-    else:
-        df_hist = pd.DataFrame(history)
-        df_agg = (
-            df_hist.groupby(["ticker", "strike", "expiration", "type"])
-            .agg(giorni=("date","nunique"), ultimo_flow=("flow","last"),
-                 ultimo_voi=("voi","last"), ultima_data=("date","max"))
-            .reset_index()
-            .sort_values("giorni", ascending=False)
-        )
-        df_agg["ultimo_flow"] = df_agg["ultimo_flow"].apply(format_k)
-        def clean_strike(v):
+    # =========================
+    # STORICO
+    # =========================
+    with st.expander("📅 Storico Scansioni — Tracker Accumulo 🐋"):
+        history = load_history()
+        if not history:
+            st.info("Nessuna scansione salvata. Esegui una scansione per iniziare a costruire lo storico.")
+        else:
+            df_hist = pd.DataFrame(history)
+            df_agg = (
+                df_hist.groupby(["ticker", "strike", "expiration", "type"])
+                .agg(giorni=("date","nunique"), ultimo_flow=("flow","last"),
+                     ultimo_voi=("voi","last"), ultima_data=("date","max"))
+                .reset_index()
+                .sort_values("giorni", ascending=False)
+            )
+            df_agg["ultimo_flow"] = df_agg["ultimo_flow"].apply(format_k)
+            def clean_strike(v):
+                try:
+                    f = float(v)
+                    return str(int(f)) if f == int(f) else f"{f:.2f}"
+                except: return str(v)
+            def clean_voi(v):
+                try: return f"{float(v):.2f}"
+                except: return str(v)
+            df_agg["strike"]     = df_agg["strike"].apply(clean_strike)
+            df_agg["ultimo_voi"] = df_agg["ultimo_voi"].apply(clean_voi)
+            df_agg.columns = ["Ticker","Strike","Scadenza","Tipo","🐋 Giorni","Ultimo Flow","Ultimo VOI","Ultima Data"]
+            def hl_whale(val):
+                try:
+                    v = int(val)
+                    if v >= 3: return "background-color:#1a1a3a; color:#88aaff"
+                    if v >= 2: return "background-color:#1a3a1a; color:#00ff88"
+                except: pass
+                return ""
+            st.dataframe(df_agg.style.map(hl_whale, subset=["🐋 Giorni"]),
+                         use_container_width=True, hide_index=True)
+            col_h1, col_h2 = st.columns(2)
+            with col_h1:
+                st.caption(f"📊 Record totali: {len(df_hist)} | Contratti unici: {len(df_agg)}")
+            with col_h2:
+                if st.button("🗑️ Cancella storico", type="secondary"):
+                    sheet = get_sheet("history")
+                    if sheet:
+                        try:
+                            sheet.clear()
+                            sheet.append_row(HISTORY_COLS)
+                            load_history.clear()
+                        except Exception:
+                            pass
+                    if os.path.exists("scan_history.json"):
+                        os.remove("scan_history.json")
+                    st.success("Storico cancellato ✅")
+                    st.rerun()
+
+    # =========================
+    # WATCHLIST
+    # =========================
+    with st.expander("⭐ Watchlist — Monitora contratti specifici"):
+        wl = load_watchlist()
+        st.markdown("**Aggiungi contratto da monitorare:**")
+        wl_col1, wl_col2, wl_col3, wl_col4, wl_col5 = st.columns([2,1,2,1,2])
+        with wl_col1:
+            wl_ticker = st.text_input("Ticker", value="SPY", key="wl_ticker").upper()
+        with wl_col2:
+            wl_type = st.selectbox("Tipo", ["C", "P"], key="wl_type")
+        with wl_col3:
+            wl_strike = st.number_input("Strike", min_value=1.0, value=735.0, step=1.0, key="wl_strike")
+        with wl_col4:
+            wl_exp = st.text_input("Scadenza (YYYY-MM-DD)", value="2026-08-21", key="wl_exp")
+        with wl_col5:
+            wl_note = st.text_input("Nota (opzionale)", value="", key="wl_note")
+        if st.button("➕ Aggiungi alla Watchlist", key="wl_add"):
+            ok = add_to_watchlist(wl_ticker, wl_strike, wl_exp, wl_type, wl_note)
+            if ok:
+                st.success(f"✅ {wl_ticker} {wl_exp} {wl_strike}{wl_type} aggiunto!")
+                wl = load_watchlist()
+            else:
+                st.warning("⚠️ Contratto già in watchlist.")
+        if wl:
+            st.markdown("---")
+            st.markdown("**Contratti monitorati:**")
+            if st.button("🔄 Aggiorna tutti i contratti in watchlist", key="wl_refresh"):
+                wl_results = []
+                prog = st.progress(0, text="📡 Aggiornamento watchlist...")
+                for i, entry in enumerate(wl):
+                    t      = entry.get("ticker","")
+                    strike = float(entry.get("strike", 0))
+                    exp    = entry.get("expiration","")
+                    ctype  = entry.get("type","")
+                    note   = entry.get("note","")
+                    added  = entry.get("added","")
+                    underlying = get_stock_price(t)
+                    if underlying is None:
+                        wl_results.append({"Ticker":t,"Contratto":f"{t} {exp} {strike}{ctype}",
+                            "Nota":note,"MID":"—","VOI":"—","IV":"—","🐋 DAYS":"—","Aggiunto":added,"Underlying":"—"})
+                        continue
+                    try:
+                        r = requests.get(
+                            f"https://api.polygon.io/v3/snapshot/options/{t}",
+                            params={"apiKey":POLYGON_API_KEY,"strike_price":strike,
+                                    "expiration_date":exp,"contract_type":"call" if ctype=="C" else "put","limit":5},
+                            timeout=10
+                        )
+                        results = r.json().get("results",[]) if r.status_code==200 else []
+                        match = next((x for x in results
+                                      if abs(x.get("details",{}).get("strike_price",0)-strike)<0.01
+                                      and x.get("details",{}).get("expiration_date","")==exp), None)
+                        if match:
+                            day    = match.get("day",{})
+                            mid    = day.get("close") or day.get("vwap") or 0
+                            oi     = match.get("open_interest") or 0
+                            vol    = day.get("volume") or 0
+                            iv_raw = match.get("implied_volatility") or 0
+                            iv_pct = round(iv_raw*100,1) if iv_raw else None
+                            voi    = round(vol/oi,2) if oi>0 else 0
+                            days_r = get_cluster_repeat(t, strike, exp, ctype)
+                            save_watchlist_snapshot(t, strike, exp, ctype, mid, voi, iv_pct, vol, underlying)
+                            wl_results.append({"Ticker":t,"Contratto":f"{t} {exp} {strike}{ctype}",
+                                "Nota":note,"Underlying":f"${underlying}","MID":f"${mid:.2f}" if mid else "—",
+                                "VOI":f"{voi:.2f}","IV":f"{iv_pct:.1f}%" if iv_pct else "—",
+                                "🐋 DAYS":days_r,"Aggiunto":added})
+                        else:
+                            wl_results.append({"Ticker":t,"Contratto":f"{t} {exp} {strike}{ctype}",
+                                "Nota":note,"MID":"n/d","VOI":"n/d","IV":"n/d","🐋 DAYS":"—",
+                                "Aggiunto":added,"Underlying":f"${underlying}"})
+                    except Exception:
+                        wl_results.append({"Ticker":t,"Contratto":f"{t} {exp} {strike}{ctype}",
+                            "Nota":note,"MID":"err","VOI":"err","IV":"err","🐋 DAYS":"—",
+                            "Aggiunto":added,"Underlying":"err"})
+                    prog.progress((i+1)/len(wl), text=f"📡 {i+1}/{len(wl)} contratti aggiornati")
+                prog.empty()
+                if wl_results:
+                    st.dataframe(pd.DataFrame(wl_results), use_container_width=True, hide_index=True)
+            else:
+                wl_display = [{"Contratto":f"{e.get('ticker','')} {e.get('expiration','')} {e.get('strike','')}{e.get('type','')}",
+                    "Nota":e.get("note",""),"Aggiunto":e.get("added",""),
+                    "🐋 DAYS":get_cluster_repeat(e.get("ticker",""),e.get("strike",""),e.get("expiration",""),e.get("type",""))}
+                    for e in wl]
+                st.dataframe(pd.DataFrame(wl_display), use_container_width=True, hide_index=True)
+            st.markdown("---")
+            wl_labels = [f"{e.get('ticker','')} {e.get('expiration','')} {e.get('strike','')}{e.get('type','')}" for e in wl]
+            to_remove = st.selectbox("Rimuovi dalla watchlist:", ["— seleziona —"] + wl_labels, key="wl_remove")
+            if st.button("🗑️ Rimuovi", key="wl_remove_btn") and to_remove != "— seleziona —":
+                wl = [e for e in wl if f"{e.get('ticker','')} {e.get('expiration','')} {e.get('strike','')}{e.get('type','')}" != to_remove]
+                save_watchlist(wl)
+                st.success(f"Rimosso: {to_remove}")
+                st.rerun()
+        else:
+            st.info("Nessun contratto in watchlist. Aggiungine uno sopra.")
+
+    # =========================
+    # SCAN BUTTON — LOGICA
+    # =========================
+    if scan_clicked:
+        tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
+        if not tickers:
+            st.error("Inserisci almeno un ticker.")
+            st.stop()
+
+        final_df, telegram_text = pd.DataFrame(), ""
+
+        for ticker in tickers:
+            st.markdown(f"### 🔍 {ticker}")
+            df = scan_ticker(ticker)
+            if df.empty:
+                st.info(f"Nessuna opportunità trovata per {ticker} con i filtri correnti.")
+                continue
+            top = df.head(10)
+            final_df = pd.concat([final_df, top], ignore_index=True)
+
+            if send_telegram:
+                top_filtered = top[top["SIG"].str.contains("GO|HOLD", na=False)]
+                if not top_filtered.empty:
+                    telegram_text += f"🔥 TOP FLOW — {ticker} [{mode}]\n\n"
+                    for _, row in top_filtered.head(3).iterrows():
+                        ask_hit_val = row.get("ASK_HIT")
+                        sweep_val   = row.get("SWEEP", "")
+                        whale_days  = row.get("🐋 DAYS", 0)
+                        hit_emoji   = ""
+                        if ask_hit_val is not None:
+                            hit_emoji = "🟢" if ask_hit_val>=70 else ("🔴" if ask_hit_val<=30 else "🟡")
+                        telegram_text += (
+                            f"{row.get('SCORE','')}  {row['SIG']}  {row['BIAS']}\n"
+                            f"{row['OPZIONE']}\n"
+                            f"Mid: ${row['MID']}  VOI: {row['VOI']}  Vol: {row['volume']}\n"
+                            f"Flow: {row['FLOW $']}"
+                        )
+                        if ask_hit_val is not None:
+                            telegram_text += f"  Ask Hit: {hit_emoji}{ask_hit_val:.0f}%"
+                        if sweep_val:
+                            telegram_text += f"  {sweep_val}"
+                        if whale_days >= 2:
+                            telegram_text += f"  🐋{whale_days}d"
+                        telegram_text += "\n\n"
+
+        if not final_df.empty:
+            if send_telegram and telegram_text:
+                ok = send_telegram_message(telegram_text)
+                if ok:
+                    st.success("📲 Alert Telegram inviato!")
+                else:
+                    st.error("❌ Errore invio Telegram")
+
+            records = []
+            for _, r in final_df.iterrows():
+                rec = {}
+                for col in final_df.columns:
+                    val = r[col]
+                    try:
+                        if pd.isna(val): val = None
+                    except: pass
+                    if isinstance(val, (pd.Timestamp,)): val = str(val)
+                    rec[col] = val
+                records.append(rec)
+            st.session_state["saved_records"] = records
+            st.session_state["saved_tickers"] = tickers
+
+        else:
+            st.warning("⚠️ Nessuna opportunità trovata. Prova ad allargare i filtri.")
+            st.session_state.pop("saved_records", None)
+
+    # =========================
+    # MOSTRA RISULTATI
+    # =========================
+    if st.session_state.get("saved_records"):
+        records  = st.session_state["saved_records"]
+        df_show  = pd.DataFrame(records)
+
+        st.success(f"✅ Trovate {len(df_show)} opportunità — premi 🚀 per aggiornare")
+
+        display_cols = [
+            "SCORE", "SIG", "FLOW $", "CLUSTER", "BIAS", "SWEEP", "🐋 DAYS",
+            "OPZIONE", "UNDER", "MID", "volume", "OI", "VOI", "VOI_ANOM", "DTE", "IV",
+            "GEX_M", "ASK_HIT", "EARN", "ITM", "ATM", "OTM",
+        ]
+        display_cols = [c for c in display_cols if c in df_show.columns]
+
+        def hl_score(val):
             try:
-                f = float(v)
-                return str(int(f)) if f == int(f) else f"{f:.2f}"
-            except: return str(v)
-        def clean_voi(v):
-            try: return f"{float(v):.2f}"
-            except: return str(v)
-        df_agg["strike"]     = df_agg["strike"].apply(clean_strike)
-        df_agg["ultimo_voi"] = df_agg["ultimo_voi"].apply(clean_voi)
-        df_agg.columns = ["Ticker","Strike","Scadenza","Tipo","🐋 Giorni","Ultimo Flow","Ultimo VOI","Ultima Data"]
+                v = int(str(val).split()[-1])
+                if v >= 75: return "background-color:#0a2a0a; color:#00ff44; font-weight:bold"
+                if v >= 50: return "background-color:#1a2a00; color:#aaff00; font-weight:bold"
+                if v >= 30: return "background-color:#2a2a00; color:#ffdd00"
+                return "background-color:#1a1a1a; color:#888888"
+            except: return ""
+        def hl_earn(val):
+            if val and "⚠️" in str(val): return "background-color:#3a1a00; color:#ffaa00"
+            return ""
+        def hl_voi_anom(val):
+            s = str(val)
+            if "🚀" in s: return "background-color:#0a1a3a; color:#00aaff; font-weight:bold"
+            if "📈" in s: return "background-color:#0a2a1a; color:#00ff88"
+            if "📉" in s: return "background-color:#2a0a0a; color:#ff6666"
+            return ""
+        def hl_sig(val):
+            if "GO"   in str(val): return "background-color:#1a3a1a; color:#00ff88"
+            if "HOLD" in str(val): return "background-color:#3a3a0a; color:#ffdd00"
+            if "STOP" in str(val): return "background-color:#3a0a0a; color:#ff4444"
+            return ""
+        def hl_ask(val):
+            try:
+                v = float(val)
+                if v >= 70: return "background-color:#1a3a1a; color:#00ff88"
+                if v <= 30: return "background-color:#3a0a0a; color:#ff4444"
+                return "background-color:#3a3a0a; color:#ffdd00"
+            except: return ""
+        def hl_sweep(val):
+            return "background-color:#1a1a3a; color:#88aaff" if val=="🌊" else ""
         def hl_whale(val):
             try:
                 v = int(val)
@@ -1375,381 +1571,144 @@ with st.expander("📅 Storico Scansioni — Tracker Accumulo 🐋"):
                 if v >= 2: return "background-color:#1a3a1a; color:#00ff88"
             except: pass
             return ""
-        st.dataframe(df_agg.style.map(hl_whale, subset=["🐋 Giorni"]),
-                     use_container_width=True, hide_index=True)
-        col_h1, col_h2 = st.columns(2)
-        with col_h1:
-            st.caption(f"📊 Record totali: {len(df_hist)} | Contratti unici: {len(df_agg)}")
-        with col_h2:
-            if st.button("🗑️ Cancella storico", type="secondary"):
-                sheet = get_sheet("history")
-                if sheet:
-                    try:
-                        sheet.clear()
-                        sheet.append_row(HISTORY_COLS)
-                        load_history.clear()
-                    except Exception:
-                        pass
-                if os.path.exists("scan_history.json"):
-                    os.remove("scan_history.json")
-                st.success("Storico cancellato ✅")
-                st.rerun()
+        def hl_gex(val):
+            try:
+                v = float(val)
+                if v >= 1.0:  return "background-color:#1a3a1a; color:#00ff88"
+                if v <= -1.0: return "background-color:#3a0a0a; color:#ff4444"
+                return ""
+            except: return ""
 
-# =========================
-# WATCHLIST
-# =========================
-with st.expander("⭐ Watchlist — Monitora contratti specifici"):
-    wl = load_watchlist()
-    st.markdown("**Aggiungi contratto da monitorare:**")
-    wl_col1, wl_col2, wl_col3, wl_col4, wl_col5 = st.columns([2,1,2,1,2])
-    with wl_col1:
-        wl_ticker = st.text_input("Ticker", value="SPY", key="wl_ticker").upper()
-    with wl_col2:
-        wl_type = st.selectbox("Tipo", ["C", "P"], key="wl_type")
-    with wl_col3:
-        wl_strike = st.number_input("Strike", min_value=1.0, value=735.0, step=1.0, key="wl_strike")
-    with wl_col4:
-        wl_exp = st.text_input("Scadenza (YYYY-MM-DD)", value="2026-08-21", key="wl_exp")
-    with wl_col5:
-        wl_note = st.text_input("Nota (opzionale)", value="", key="wl_note")
-    if st.button("➕ Aggiungi alla Watchlist", key="wl_add"):
-        ok = add_to_watchlist(wl_ticker, wl_strike, wl_exp, wl_type, wl_note)
-        if ok:
-            st.success(f"✅ {wl_ticker} {wl_exp} {wl_strike}{wl_type} aggiunto!")
-            wl = load_watchlist()
-        else:
-            st.warning("⚠️ Contratto già in watchlist.")
-    if wl:
-        st.markdown("---")
-        st.markdown("**Contratti monitorati:**")
-        if st.button("🔄 Aggiorna tutti i contratti in watchlist", key="wl_refresh"):
-            wl_results = []
-            prog = st.progress(0, text="📡 Aggiornamento watchlist...")
-            for i, entry in enumerate(wl):
-                t      = entry.get("ticker","")
-                strike = float(entry.get("strike", 0))
-                exp    = entry.get("expiration","")
-                ctype  = entry.get("type","")
-                note   = entry.get("note","")
-                added  = entry.get("added","")
-                underlying = get_stock_price(t)
-                if underlying is None:
-                    wl_results.append({"Ticker":t,"Contratto":f"{t} {exp} {strike}{ctype}",
-                        "Nota":note,"MID":"—","VOI":"—","IV":"—","🐋 DAYS":"—","Aggiunto":added,"Underlying":"—"})
-                    continue
-                try:
-                    r = requests.get(
-                        f"https://api.polygon.io/v3/snapshot/options/{t}",
-                        params={"apiKey":POLYGON_API_KEY,"strike_price":strike,
-                                "expiration_date":exp,"contract_type":"call" if ctype=="C" else "put","limit":5},
-                        timeout=10
-                    )
-                    results = r.json().get("results",[]) if r.status_code==200 else []
-                    match = next((x for x in results
-                                  if abs(x.get("details",{}).get("strike_price",0)-strike)<0.01
-                                  and x.get("details",{}).get("expiration_date","")==exp), None)
-                    if match:
-                        day    = match.get("day",{})
-                        mid    = day.get("close") or day.get("vwap") or 0
-                        oi     = match.get("open_interest") or 0
-                        vol    = day.get("volume") or 0
-                        iv_raw = match.get("implied_volatility") or 0
-                        iv_pct = round(iv_raw*100,1) if iv_raw else None
-                        voi    = round(vol/oi,2) if oi>0 else 0
-                        days_r = get_cluster_repeat(t, strike, exp, ctype)
-                        save_watchlist_snapshot(t, strike, exp, ctype, mid, voi, iv_pct, vol, underlying)
-                        wl_results.append({"Ticker":t,"Contratto":f"{t} {exp} {strike}{ctype}",
-                            "Nota":note,"Underlying":f"${underlying}","MID":f"${mid:.2f}" if mid else "—",
-                            "VOI":f"{voi:.2f}","IV":f"{iv_pct:.1f}%" if iv_pct else "—",
-                            "🐋 DAYS":days_r,"Aggiunto":added})
-                    else:
-                        wl_results.append({"Ticker":t,"Contratto":f"{t} {exp} {strike}{ctype}",
-                            "Nota":note,"MID":"n/d","VOI":"n/d","IV":"n/d","🐋 DAYS":"—",
-                            "Aggiunto":added,"Underlying":f"${underlying}"})
-                except Exception:
-                    wl_results.append({"Ticker":t,"Contratto":f"{t} {exp} {strike}{ctype}",
-                        "Nota":note,"MID":"err","VOI":"err","IV":"err","🐋 DAYS":"—",
-                        "Aggiunto":added,"Underlying":"err"})
-                prog.progress((i+1)/len(wl), text=f"📡 {i+1}/{len(wl)} contratti aggiornati")
-            prog.empty()
-            if wl_results:
-                st.dataframe(pd.DataFrame(wl_results), use_container_width=True, hide_index=True)
-        else:
-            wl_display = [{"Contratto":f"{e.get('ticker','')} {e.get('expiration','')} {e.get('strike','')}{e.get('type','')}",
-                "Nota":e.get("note",""),"Aggiunto":e.get("added",""),
-                "🐋 DAYS":get_cluster_repeat(e.get("ticker",""),e.get("strike",""),e.get("expiration",""),e.get("type",""))}
-                for e in wl]
-            st.dataframe(pd.DataFrame(wl_display), use_container_width=True, hide_index=True)
-        st.markdown("---")
-        wl_labels = [f"{e.get('ticker','')} {e.get('expiration','')} {e.get('strike','')}{e.get('type','')}" for e in wl]
-        to_remove = st.selectbox("Rimuovi dalla watchlist:", ["— seleziona —"] + wl_labels, key="wl_remove")
-        if st.button("🗑️ Rimuovi", key="wl_remove_btn") and to_remove != "— seleziona —":
-            wl = [e for e in wl if f"{e.get('ticker','')} {e.get('expiration','')} {e.get('strike','')}{e.get('type','')}" != to_remove]
-            save_watchlist(wl)
-            st.success(f"Rimosso: {to_remove}")
-            st.rerun()
-    else:
-        st.info("Nessun contratto in watchlist. Aggiungine uno sopra.")
+        fmt = {
+            "UNDER":   lambda x: f"${x:.2f}"        if pd.notna(x) else "—",
+            "MID":     lambda x: f"${x:.2f}"        if pd.notna(x) else "—",
+            "VOI":     lambda x: f"{float(x):.2f}"  if pd.notna(x) else "—",
+            "ASK_HIT": lambda x: f"{float(x):.0f}%" if pd.notna(x) else "—",
+            "IV":      lambda x: f"{x:.1f}%"        if pd.notna(x) else "—",
+            "GEX_M":   lambda x: f"{x:+.2f}M"       if pd.notna(x) and x != 0 else "—",
+            "delta":   lambda x: f"{x:.3f}"         if pd.notna(x) else "—",
+            "gamma":   lambda x: f"{x:.4f}"         if pd.notna(x) else "—",
+            "theta":   lambda x: f"{x:.3f}"         if pd.notna(x) else "—",
+            "vega":    lambda x: f"{x:.3f}"         if pd.notna(x) else "—",
+        }
 
-# =========================
-# SCAN BUTTON (sidebar) — LOGICA
-# =========================
-if scan_clicked:
-    tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
-    if not tickers:
-        st.error("Inserisci almeno un ticker.")
-        st.stop()
+        styled = (
+            df_show[display_cols].reset_index(drop=True).style
+            .map(hl_score,    subset=["SCORE"]    if "SCORE"    in df_show.columns else [])
+            .map(hl_sig,      subset=["SIG"])
+            .map(hl_ask,      subset=["ASK_HIT"]  if "ASK_HIT"  in df_show.columns else [])
+            .map(hl_sweep,    subset=["SWEEP"]     if "SWEEP"    in df_show.columns else [])
+            .map(hl_whale,    subset=["🐋 DAYS"]   if "🐋 DAYS"  in df_show.columns else [])
+            .map(hl_earn,     subset=["EARN"]      if "EARN"     in df_show.columns else [])
+            .map(hl_voi_anom, subset=["VOI_ANOM"]  if "VOI_ANOM" in df_show.columns else [])
+            .map(hl_gex,      subset=["GEX_M"]     if "GEX_M"    in df_show.columns else [])
+            .format(fmt, na_rep="—")
+        )
+        st.dataframe(styled, use_container_width=True, hide_index=True)
 
-    final_df, telegram_text = pd.DataFrame(), ""
-
-    for ticker in tickers:
-        st.markdown(f"### 🔍 {ticker}")
-        df = scan_ticker(ticker)
-        if df.empty:
-            st.info(f"Nessuna opportunità trovata per {ticker} con i filtri correnti.")
-            continue
-        top = df.head(10)
-        final_df = pd.concat([final_df, top], ignore_index=True)
-
-        if send_telegram:
-            top_filtered = top[top["SIG"].str.contains("GO|HOLD", na=False)]
-            if not top_filtered.empty:
-                telegram_text += f"🔥 TOP FLOW — {ticker} [{mode}]\n\n"
-                for _, row in top_filtered.head(3).iterrows():
-                    ask_hit_val = row.get("ASK_HIT")
-                    sweep_val   = row.get("SWEEP", "")
-                    whale_days  = row.get("🐋 DAYS", 0)
-                    hit_emoji   = ""
-                    if ask_hit_val is not None:
-                        hit_emoji = "🟢" if ask_hit_val>=70 else ("🔴" if ask_hit_val<=30 else "🟡")
-                    telegram_text += (
-                        f"{row.get('SCORE','')}  {row['SIG']}  {row['BIAS']}\n"
-                        f"{row['OPZIONE']}\n"
-                        f"Mid: ${row['MID']}  VOI: {row['VOI']}  Vol: {row['volume']}\n"
-                        f"Flow: {row['FLOW $']}"
-                    )
-                    if ask_hit_val is not None:
-                        telegram_text += f"  Ask Hit: {hit_emoji}{ask_hit_val:.0f}%"
-                    if sweep_val:
-                        telegram_text += f"  {sweep_val}"
-                    if whale_days >= 2:
-                        telegram_text += f"  🐋{whale_days}d"
-                    telegram_text += "\n\n"
-
-    if not final_df.empty:
-        if send_telegram and telegram_text:
-            ok = send_telegram_message(telegram_text)
-            if ok:
-                st.success("📲 Alert Telegram inviato!")
-            else:
-                st.error("❌ Errore invio Telegram")
-
-        records = []
-        for _, r in final_df.iterrows():
-            rec = {}
-            for col in final_df.columns:
-                val = r[col]
-                try:
-                    if pd.isna(val): val = None
-                except: pass
-                if isinstance(val, (pd.Timestamp,)): val = str(val)
-                rec[col] = val
-            records.append(rec)
-        st.session_state["saved_records"] = records
-        st.session_state["saved_tickers"] = tickers
-
-    else:
-        st.warning("⚠️ Nessuna opportunità trovata. Prova ad allargare i filtri.")
-        st.session_state.pop("saved_records", None)
-
-# =========================
-# MOSTRA RISULTATI (persistenti tramite session_state)
-# =========================
-if st.session_state.get("saved_records"):
-    records = st.session_state["saved_records"]
-    df_show = pd.DataFrame(records)
-
-    st.success(f"✅ Trovate {len(df_show)} opportunità — premi 🚀 per aggiornare")
-
-    display_cols = [
-        "SCORE", "SIG", "FLOW $", "CLUSTER", "BIAS", "SWEEP", "🐋 DAYS",
-        "OPZIONE", "UNDER", "MID", "volume", "OI", "VOI", "VOI_ANOM", "DTE", "IV",
-        "GEX_M", "ASK_HIT", "EARN", "ITM", "ATM", "OTM",
-    ]
-    display_cols = [c for c in display_cols if c in df_show.columns]
-
-    def hl_score(val):
-        try:
-            v = int(str(val).split()[-1])
-            if v >= 75: return "background-color:#0a2a0a; color:#00ff44; font-weight:bold"
-            if v >= 50: return "background-color:#1a2a00; color:#aaff00; font-weight:bold"
-            if v >= 30: return "background-color:#2a2a00; color:#ffdd00"
-            return "background-color:#1a1a1a; color:#888888"
-        except: return ""
-    def hl_earn(val):
-        if val and "⚠️" in str(val): return "background-color:#3a1a00; color:#ffaa00"
-        return ""
-    def hl_voi_anom(val):
-        s = str(val)
-        if "🚀" in s: return "background-color:#0a1a3a; color:#00aaff; font-weight:bold"
-        if "📈" in s: return "background-color:#0a2a1a; color:#00ff88"
-        if "📉" in s: return "background-color:#2a0a0a; color:#ff6666"
-        return ""
-    def hl_sig(val):
-        if "GO"   in str(val): return "background-color:#1a3a1a; color:#00ff88"
-        if "HOLD" in str(val): return "background-color:#3a3a0a; color:#ffdd00"
-        if "STOP" in str(val): return "background-color:#3a0a0a; color:#ff4444"
-        return ""
-    def hl_ask(val):
-        try:
-            v = float(val)
-            if v >= 70: return "background-color:#1a3a1a; color:#00ff88"
-            if v <= 30: return "background-color:#3a0a0a; color:#ff4444"
-            return "background-color:#3a3a0a; color:#ffdd00"
-        except: return ""
-    def hl_sweep(val):
-        return "background-color:#1a1a3a; color:#88aaff" if val=="🌊" else ""
-    def hl_whale(val):
-        try:
-            v = int(val)
-            if v >= 3: return "background-color:#1a1a3a; color:#88aaff"
-            if v >= 2: return "background-color:#1a3a1a; color:#00ff88"
-        except: pass
-        return ""
-    def hl_gex(val):
-        try:
-            v = float(val)
-            if v >= 1.0:  return "background-color:#1a3a1a; color:#00ff88"
-            if v <= -1.0: return "background-color:#3a0a0a; color:#ff4444"
-            return ""
-        except: return ""
-
-    fmt = {
-        "UNDER":   lambda x: f"${x:.2f}"        if pd.notna(x) else "—",
-        "MID":     lambda x: f"${x:.2f}"        if pd.notna(x) else "—",
-        "VOI":     lambda x: f"{float(x):.2f}"  if pd.notna(x) else "—",
-        "ASK_HIT": lambda x: f"{float(x):.0f}%" if pd.notna(x) else "—",
-        "IV":      lambda x: f"{x:.1f}%"        if pd.notna(x) else "—",
-        "GEX_M":   lambda x: f"{x:+.2f}M"       if pd.notna(x) and x != 0 else "—",
-        "delta":   lambda x: f"{x:.3f}"         if pd.notna(x) else "—",
-        "gamma":   lambda x: f"{x:.4f}"         if pd.notna(x) else "—",
-        "theta":   lambda x: f"{x:.3f}"         if pd.notna(x) else "—",
-        "vega":    lambda x: f"{x:.3f}"         if pd.notna(x) else "—",
-    }
-
-    styled = (
-        df_show[display_cols].reset_index(drop=True).style
-        .map(hl_score,    subset=["SCORE"]    if "SCORE"    in df_show.columns else [])
-        .map(hl_sig,      subset=["SIG"])
-        .map(hl_ask,      subset=["ASK_HIT"]  if "ASK_HIT"  in df_show.columns else [])
-        .map(hl_sweep,    subset=["SWEEP"]     if "SWEEP"    in df_show.columns else [])
-        .map(hl_whale,    subset=["🐋 DAYS"]   if "🐋 DAYS"  in df_show.columns else [])
-        .map(hl_earn,     subset=["EARN"]      if "EARN"     in df_show.columns else [])
-        .map(hl_voi_anom, subset=["VOI_ANOM"]  if "VOI_ANOM" in df_show.columns else [])
-        .map(hl_gex,      subset=["GEX_M"]     if "GEX_M"    in df_show.columns else [])
-        .format(fmt, na_rep="—")
-    )
-    st.dataframe(styled, use_container_width=True, hide_index=True)
-
-    # GEX Summary
-    if "GEX_M" in df_show.columns and "strike" in df_show.columns:
-        with st.expander("⚡ GEX — Gamma Exposure per Strike", expanded=False):
-            st.markdown("""
+        # GEX Summary
+        if "GEX_M" in df_show.columns and "strike" in df_show.columns:
+            with st.expander("⚡ GEX — Gamma Exposure per Strike", expanded=False):
+                st.markdown("""
 **Come leggere il GEX:**
 - 🟢 **GEX positivo** → dealer long gamma → frenano i movimenti → livello di supporto/resistenza
 - 🔴 **GEX negativo** → dealer short gamma → amplificano i movimenti → livello esplosivo
 """)
-            gex_by_strike = (
-                df_show.groupby("strike")["GEX_M"]
-                .sum()
-                .reset_index()
-                .sort_values("GEX_M", ascending=False)
-                .rename(columns={"strike": "Strike", "GEX_M": "GEX Totale ($M)"})
-            )
-            gex_by_strike["Strike"] = gex_by_strike["Strike"].apply(
-                lambda x: str(int(x)) if x == int(x) else f"{x:.2f}"
-            )
-            gex_by_strike["GEX Totale ($M)"] = gex_by_strike["GEX Totale ($M)"].round(2)
-            def hl_gex_table(val):
-                try:
-                    v = float(val)
-                    if v >= 1.0:  return "background-color:#1a3a1a; color:#00ff88"
-                    if v <= -1.0: return "background-color:#3a0a0a; color:#ff4444"
-                except: pass
-                return ""
+                gex_by_strike = (
+                    df_show.groupby("strike")["GEX_M"]
+                    .sum()
+                    .reset_index()
+                    .sort_values("GEX_M", ascending=False)
+                    .rename(columns={"strike": "Strike", "GEX_M": "GEX Totale ($M)"})
+                )
+                gex_by_strike["Strike"] = gex_by_strike["Strike"].apply(
+                    lambda x: str(int(x)) if x == int(x) else f"{x:.2f}"
+                )
+                gex_by_strike["GEX Totale ($M)"] = gex_by_strike["GEX Totale ($M)"].round(2)
+                def hl_gex_table(val):
+                    try:
+                        v = float(val)
+                        if v >= 1.0:  return "background-color:#1a3a1a; color:#00ff88"
+                        if v <= -1.0: return "background-color:#3a0a0a; color:#ff4444"
+                    except: pass
+                    return ""
+                st.dataframe(
+                    gex_by_strike.style
+                    .map(hl_gex_table, subset=["GEX Totale ($M)"])
+                    .format({"GEX Totale ($M)": lambda x: f"{x:+.2f}M"}),
+                    use_container_width=True, hide_index=True
+                )
+
+        # Greeks
+        df_greeks = df_show.copy()
+        if "bid"    in df_greeks.columns: df_greeks = df_greeks.rename(columns={"bid":    "~bid"})
+        if "ask"    in df_greeks.columns: df_greeks = df_greeks.rename(columns={"ask":    "~ask"})
+        if "SPREAD" in df_greeks.columns: df_greeks = df_greeks.rename(columns={"SPREAD": "~SPREAD"})
+        greeks_cols = ["OPZIONE", "delta", "gamma", "theta", "vega", "~bid", "~ask", "~SPREAD"]
+        greeks_cols = [c for c in greeks_cols if c in df_greeks.columns]
+        with st.expander("📐 Dettaglio Greeks & Prezzi stimati"):
+            fmt_greeks = {
+                "delta":   lambda x: f"{x:.3f}"   if pd.notna(x) else "—",
+                "gamma":   lambda x: f"{x:.4f}"   if pd.notna(x) else "—",
+                "theta":   lambda x: f"{x:.3f}"   if pd.notna(x) else "—",
+                "vega":    lambda x: f"{x:.3f}"   if pd.notna(x) else "—",
+                "~bid":    lambda x: f"~${x:.2f}" if pd.notna(x) else "—",
+                "~ask":    lambda x: f"~${x:.2f}" if pd.notna(x) else "—",
+                "~SPREAD": lambda x: f"~${x:.2f}" if pd.notna(x) else "—",
+            }
             st.dataframe(
-                gex_by_strike.style
-                .map(hl_gex_table, subset=["GEX Totale ($M)"])
-                .format({"GEX Totale ($M)": lambda x: f"{x:+.2f}M"}),
+                df_greeks[greeks_cols].reset_index(drop=True).style.format(fmt_greeks, na_rep="—"),
                 use_container_width=True, hide_index=True
             )
+            st.caption("~bid / ~ask / ~SPREAD = stime da MID ±1.5% (quote live richiedono piano Advanced)")
 
-    # Greeks
-    df_greeks = df_show.copy()
-    if "bid" in df_greeks.columns:    df_greeks = df_greeks.rename(columns={"bid": "~bid"})
-    if "ask" in df_greeks.columns:    df_greeks = df_greeks.rename(columns={"ask": "~ask"})
-    if "SPREAD" in df_greeks.columns: df_greeks = df_greeks.rename(columns={"SPREAD": "~SPREAD"})
-    greeks_cols = ["OPZIONE", "delta", "gamma", "theta", "vega", "~bid", "~ask", "~SPREAD"]
-    greeks_cols = [c for c in greeks_cols if c in df_greeks.columns]
-    with st.expander("📐 Dettaglio Greeks & Prezzi stimati"):
-        fmt_greeks = {
-            "delta":   lambda x: f"{x:.3f}"   if pd.notna(x) else "—",
-            "gamma":   lambda x: f"{x:.4f}"   if pd.notna(x) else "—",
-            "theta":   lambda x: f"{x:.3f}"   if pd.notna(x) else "—",
-            "vega":    lambda x: f"{x:.3f}"   if pd.notna(x) else "—",
-            "~bid":    lambda x: f"~${x:.2f}" if pd.notna(x) else "—",
-            "~ask":    lambda x: f"~${x:.2f}" if pd.notna(x) else "—",
-            "~SPREAD": lambda x: f"~${x:.2f}" if pd.notna(x) else "—",
-        }
-        st.dataframe(
-            df_greeks[greeks_cols].reset_index(drop=True).style.format(fmt_greeks, na_rep="—"),
-            use_container_width=True, hide_index=True
-        )
-        st.caption("~bid / ~ask / ~SPREAD = stime da MID ±1.5% (quote live richiedono piano Advanced)")
+        # Aggiungi a Watchlist
+        st.markdown("---")
+        st.markdown("### ⭐ Aggiungi alla Watchlist")
+        scan_records_wl = [
+            {"OPZIONE": str(r.get("OPZIONE","")),
+             "ticker":  str(r.get("OPZIONE","")).split()[0],
+             "strike":  float(r.get("strike", 0)) if r.get("strike") else 0,
+             "exp_str": str(r.get("exp_str","")),
+             "type":    str(r.get("type","")),
+             "flow":    str(r.get("FLOW $","")),
+             "voi":     str(r.get("VOI",""))}
+            for r in records
+        ]
+        opzioni_wl = [r["OPZIONE"] for r in scan_records_wl]
+        sel_wl = st.multiselect("Seleziona opzioni:", options=opzioni_wl, key="wl_multisel_persist")
+        if st.button("➕ Aggiungi alla Watchlist", key="wl_add_persist", type="secondary"):
+            added   = 0
+            already = 0
+            for opzione in sel_wl:
+                rec = next((r for r in scan_records_wl if r["OPZIONE"]==opzione), None)
+                if rec:
+                    type_wl = "C" if rec["type"] == "CALL" else "P"
+                    note_wl = f"Flow {rec['flow']} | VOI {rec['voi']}"
+                    ok = add_to_watchlist(rec["ticker"], rec["strike"], rec["exp_str"], type_wl, note_wl)
+                    if ok: added += 1
+                    else:  already += 1
+            if not sel_wl:
+                st.warning("⚠️ Seleziona almeno un'opzione.")
+            elif added > 0:
+                msg = f"✅ {added} aggiunt{'o' if added==1 else 'i'}!"
+                if already > 0: msg += f" ({already} già in watchlist)"
+                st.success(msg)
+            else:
+                st.info("ℹ️ Tutti già in watchlist.")
 
-    # Aggiungi a Watchlist
-    st.markdown("---")
-    st.markdown("### ⭐ Aggiungi alla Watchlist")
-    scan_records_wl = [
-        {"OPZIONE": str(r.get("OPZIONE","")),
-         "ticker":  str(r.get("OPZIONE","")).split()[0],
-         "strike":  float(r.get("strike", 0)) if r.get("strike") else 0,
-         "exp_str": str(r.get("exp_str","")),
-         "type":    str(r.get("type","")),
-         "flow":    str(r.get("FLOW $","")),
-         "voi":     str(r.get("VOI",""))}
-        for r in records
-    ]
-    opzioni_wl = [r["OPZIONE"] for r in scan_records_wl]
-    sel_wl = st.multiselect("Seleziona opzioni:", options=opzioni_wl, key="wl_multisel_persist")
-    if st.button("➕ Aggiungi alla Watchlist", key="wl_add_persist", type="secondary"):
-        added = 0
-        already = 0
-        for opzione in sel_wl:
-            rec = next((r for r in scan_records_wl if r["OPZIONE"]==opzione), None)
-            if rec:
-                type_wl = "C" if rec["type"] == "CALL" else "P"
-                note_wl = f"Flow {rec['flow']} | VOI {rec['voi']}"
-                ok = add_to_watchlist(rec["ticker"], rec["strike"], rec["exp_str"], type_wl, note_wl)
-                if ok: added += 1
-                else:  already += 1
-        if not sel_wl:
-            st.warning("⚠️ Seleziona almeno un'opzione.")
-        elif added > 0:
-            msg = f"✅ {added} aggiunt{'o' if added==1 else 'i'}!"
-            if already > 0: msg += f" ({already} già in watchlist)"
-            st.success(msg)
-        else:
-            st.info("ℹ️ Tutti già in watchlist.")
+    # =========================
+    # FOOTER
+    # =========================
+    st.divider()
+    st.caption(
+        "⚠️ Questo tool è uno screener di primo livello. "
+        "L'analisi finale (grafico, contesto macro, greche) va completata su IBKR. "
+        "Nessun ordine viene eseguito automaticamente. — v6.5"
+    )
 
 # =========================
-# FOOTER
+# TAB INSIDER TRADING
 # =========================
-st.divider()
-st.caption(
-    "⚠️ Questo tool è uno screener di primo livello. "
-    "L'analisi finale (grafico, contesto macro, greche) va completata su IBKR. "
-    "Nessun ordine viene eseguito automaticamente. — v6.4"
-)
 with tab_insider:
     render_insider_section()
