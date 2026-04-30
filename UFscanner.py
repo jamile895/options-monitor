@@ -523,9 +523,8 @@ def get_insider_transactions(ticker: str, days_back: int = 90) -> list[dict]:
     for filing in form4_filings[:20]:
         try:
             acc     = filing["accession"]
-            # SEC Archives vuole accession con trattini: XXXXXXXXXX-XX-XXXXXX
-            acc_dashed = f"{acc[:10]}-{acc[10:12]}-{acc[12:]}"
-            xml_url = f"https://www.sec.gov/Archives/edgar/data/{cik_clean}/{acc_dashed}/{filing['doc']}"
+            # SEC Archives: cartella = accession SENZA trattini
+            xml_url = f"https://www.sec.gov/Archives/edgar/data/{cik_clean}/{acc}/{filing['doc']}"
             rx = requests.get(xml_url, timeout=8, headers=SEC_HEADERS)
             if rx.status_code != 200:
                 continue
@@ -641,9 +640,8 @@ def render_insider_section():
                         if form4_dbg:
                             f0 = form4_dbg[0]
                             acc0  = f0[2].replace("-","")
-                            acc_d = f"{acc0[:10]}-{acc0[10:12]}-{acc0[12:]}"
                             cik_c = str(cik_dbg).lstrip("0")
-                            xml_url = f"https://www.sec.gov/Archives/edgar/data/{cik_c}/{acc_d}/{f0[3]}"
+                            xml_url = f"https://www.sec.gov/Archives/edgar/data/{cik_c}/{acc0}/{f0[3]}"
                             st.write(f"3️⃣ URL XML: `{xml_url}`")
                             rx = _req.get(xml_url, timeout=8, headers=SEC_H)
                             st.write(f"   Status XML: `{rx.status_code}`")
@@ -1755,7 +1753,7 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
     st.caption(
         "⚠️ Questo tool è uno screener di primo livello. "
         "L'analisi finale (grafico, contesto macro, greche) va completata su IBKR. "
-        "Nessun ordine viene eseguito automaticamente. — v6.7"
+        "Nessun ordine viene eseguito automaticamente. — v6.8"
     )
 
 # =========================
