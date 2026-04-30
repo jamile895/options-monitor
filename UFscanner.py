@@ -523,10 +523,33 @@ def get_insider_transactions(ticker: str, days_back: int = 90) -> list[dict]:
     for filing in form4_filings[:20]:
         try:
             acc     = filing["accession"]
-            # SEC Archives: cartella = accession SENZA trattini
-            xml_url = f"https://www.sec.gov/Archives/edgar/data/{cik_clean}/{acc}/{filing['doc']}"
+            # Strategia: cerca il file XML puro tramite filing index
+            acc_dashed = f"{acc[:10]}-{acc[10:12]}-{acc[12:]}"
+            idx_url = f"https://www.sec.gov/Archives/edgar/data/{cik_clean}/{acc}/{acc_dashed}-index.json"
+            xml_doc = None
+            try:
+                ri = requests.get(idx_url, timeout=8, headers=SEC_HEADERS)
+                if ri.status_code == 200:
+                    idx_data = ri.json()
+                    for item in idx_data.get("documents", []):
+                        fname = item.get("filename","")
+                        ftype = item.get("type","")
+                        if ftype == "4" and fname.endswith(".xml"):
+                            xml_doc = fname
+                            break
+                        if fname.endswith(".xml") and "form4" in fname.lower():
+                            xml_doc = fname
+            except Exception:
+                pass
+            # Fallback: prova form4.xml diretto
+            if not xml_doc:
+                xml_doc = "form4.xml"
+            xml_url = f"https://www.sec.gov/Archives/edgar/data/{cik_clean}/{acc}/{xml_doc}"
             rx = requests.get(xml_url, timeout=8, headers=SEC_HEADERS)
             if rx.status_code != 200:
+                continue
+            # Verifica che sia XML e non HTML
+            if rx.text.strip().startswith("<!DOCTYPE html") or "<html" in rx.text[:200].lower():
                 continue
 
             import xml.etree.ElementTree as ET
@@ -641,14 +664,24 @@ def render_insider_section():
                             f0 = form4_dbg[0]
                             acc0  = f0[2].replace("-","")
                             cik_c = str(cik_dbg).lstrip("0")
-                            xml_url = f"https://www.sec.gov/Archives/edgar/data/{cik_c}/{acc0}/{f0[3]}"
-                            st.write(f"3️⃣ URL XML: `{xml_url}`")
-                            rx = _req.get(xml_url, timeout=8, headers=SEC_H)
-                            st.write(f"   Status XML: `{rx.status_code}`")
-                            if rx.status_code == 200:
-                                st.code(rx.text[:400], language="xml")
-                            else:
-                                st.error(f"❌ XML status {rx.status_code}: {rx.text[:200]}")
+                            # Leggi l'index del filing per trovare il vero XML
+                            idx_url = f"https://data.sec.gov/submissions/CIK{str(cik_dbg).zfill(10)}.json"
+                            idx2_url = f"https://www.sec.gov/Archives/edgar/data/{cik_c}/{acc0}/{acc0[:10]}-{acc0[10:12]}-{acc0[12:]}-index.htm"
+                            st.write(f"3️⃣ Index URL: `{idx2_url}`")
+                            ri = _req.get(idx2_url, timeout=8, headers=SEC_H)
+                            st.write(f"   Status index: `{ri.status_code}`")
+                            if ri.status_code == 200:
+                                import re as _re
+                                # Trova tutti i file .xml nell'index
+                                xml_files = _re.findall(r'href="([^"]+\.xml)"', ri.text, _re.IGNORECASE)
+                                st.write(f"   File XML trovati nell'index: `{xml_files}`")
+                            # Prova direttamente form4.xml senza sottocartella
+                            xml_url2 = f"https://www.sec.gov/Archives/edgar/data/{cik_c}/{acc0}/form4.xml"
+                            st.write(f"   Provo: `{xml_url2}`")
+                            rx2 = _req.get(xml_url2, timeout=8, headers=SEC_H)
+                            st.write(f"   Status: `{rx2.status_code}`")
+                            if rx2.status_code == 200:
+                                st.code(rx2.text[:400], language="xml")
                     else:
                         st.error(f"❌ Submissions status {rs.status_code}: {rs.text[:200]}")
                 except Exception as ex_dbg:
@@ -1753,7 +1786,7 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
     st.caption(
         "⚠️ Questo tool è uno screener di primo livello. "
         "L'analisi finale (grafico, contesto macro, greche) va completata su IBKR. "
-        "Nessun ordine viene eseguito automaticamente. — v6.8"
+        "Nessun ordine viene eseguito automaticamente. — v6.9"
     )
 
 # =========================
