@@ -471,7 +471,7 @@ def get_cik_for_ticker(ticker: str) -> str | None:
     try:
         url2 = f"https://www.sec.gov/cgi-bin/browse-edgar?company=&CIK={ticker}&type=4&dateb=&owner=include&count=1&search_text=&action=getcompany&output=atom"
         r2 = requests.get(url2, timeout=8,
-                          headers={"User-Agent": "OptionsFlowScanner scanner@options.com"})
+                          headers={"User-Agent": "Options Flow Scanner Pro info@optionsflowpro.com"})
         if r2.status_code == 200:
             import re
             m = re.search(r'CIK=(\d+)', r2.text)
@@ -490,10 +490,11 @@ def get_insider_transactions(ticker: str, days_back: int = 90) -> list[dict]:
     cik_clean = str(cik).lstrip("0")
     cutoff = (datetime.today() - timedelta(days=days_back)).strftime("%Y-%m-%d")
 
+    SEC_HEADERS = {"User-Agent": "Options Flow Scanner Pro info@optionsflowpro.com"}
+
     try:
         url = f"https://data.sec.gov/submissions/CIK{str(cik).zfill(10)}.json"
-        r = requests.get(url, timeout=10,
-                         headers={"User-Agent": "OptionsFlowScanner scanner@options.com"})
+        r = requests.get(url, timeout=10, headers=SEC_HEADERS)
         if r.status_code != 200:
             return []
         data = r.json()
@@ -522,9 +523,10 @@ def get_insider_transactions(ticker: str, days_back: int = 90) -> list[dict]:
     for filing in form4_filings[:20]:
         try:
             acc     = filing["accession"]
-            xml_url = f"https://www.sec.gov/Archives/edgar/data/{cik_clean}/{acc}/{filing['doc']}"
-            rx = requests.get(xml_url, timeout=8,
-                              headers={"User-Agent": "OptionsFlowScanner scanner@options.com"})
+            # SEC Archives vuole accession con trattini: XXXXXXXXXX-XX-XXXXXX
+            acc_dashed = f"{acc[:10]}-{acc[10:12]}-{acc[12:]}"
+            xml_url = f"https://www.sec.gov/Archives/edgar/data/{cik_clean}/{acc_dashed}/{filing['doc']}"
+            rx = requests.get(xml_url, timeout=8, headers=SEC_HEADERS)
             if rx.status_code != 200:
                 continue
 
@@ -1704,7 +1706,7 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
     st.caption(
         "⚠️ Questo tool è uno screener di primo livello. "
         "L'analisi finale (grafico, contesto macro, greche) va completata su IBKR. "
-        "Nessun ordine viene eseguito automaticamente. — v6.5"
+        "Nessun ordine viene eseguito automaticamente. — v6.6"
     )
 
 # =========================
