@@ -155,33 +155,14 @@ def get_cluster_repeat(ticker, strike, expiration, contract_type, history=None) 
             days.add(str(e.get("date","")))
     return len(days)
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def get_next_earnings(ticker: str) -> str | None:
-    try:
-        url = f"https://api.polygon.io/vX/reference/tickers/{ticker}"
-        r = requests.get(url, params={"apiKey": POLYGON_API_KEY}, timeout=8)
-        if r.status_code == 200:
-            data = r.json().get("results", {})
-            earnings = data.get("next_earnings_date") or data.get("earnings_date")
-            if earnings: return str(earnings)
-    except Exception: pass
-    try:
-        url2 = f"https://api.polygon.io/vX/reference/financials"
-        r2 = requests.get(url2, params={"apiKey": POLYGON_API_KEY, "ticker": ticker,
-            "timeframe": "quarterly", "limit": 1, "order": "desc"}, timeout=8)
-        if r2.status_code == 200:
-            results = r2.json().get("results", [])
-            if results:
-                last_period = results[0].get("end_date","")
-                if last_period:
-                    last_dt = datetime.strptime(last_period, "%Y-%m-%d")
-                    next_dt = last_dt + timedelta(days=91)
-                    return next_dt.strftime("%Y-%m-%d")
-    except Exception: pass
-    return None
-
 def earnings_in_dte(ticker: str, dte_max_days: int) -> tuple[bool, str]:
-    earnings_date = get_next_earnings(ticker)
+    """
+    v7.0 — Earnings manuali: legge da st.session_state["earnings_dates"]
+    che è un dict {ticker: "YYYY-MM-DD"} popolato dall'utente nella sidebar.
+    La stima automatica Polygon è stata rimossa perché inaffidabile.
+    """
+    earnings_map = st.session_state.get("earnings_dates", {})
+    earnings_date = earnings_map.get(ticker.upper(), "")
     if not earnings_date: return False, ""
     try:
         today = datetime.today().date()
@@ -1199,7 +1180,7 @@ PRESETS = {
     },
 }
 
-APP_VERSION = "6.5"
+APP_VERSION = "7.0"
 
 with st.sidebar:
     st.markdown("## 🔥 Options Flow Scanner")
@@ -1294,14 +1275,39 @@ with st.sidebar:
     with _c12:
         send_telegram = st.checkbox("📲 TG", value=False, help="Attiva Telegram Alerts")
 
+    # ── EARNINGS MANUALI ──
+    with st.expander("📅 Earnings (opzionale)", expanded=False):
+        st.caption("Inserisci le date earnings per evitare falsi alert. Formato: YYYY-MM-DD")
+        if "earnings_dates" not in st.session_state:
+            st.session_state["earnings_dates"] = {}
+        earn_ticker = st.text_input("Ticker", key="earn_ticker_input", placeholder="es. MRVL").upper().strip()
+        earn_date   = st.text_input("Data earnings", key="earn_date_input", placeholder="es. 2026-05-29")
+        col_ea, col_eb = st.columns(2)
+        with col_ea:
+            if st.button("➕ Aggiungi", key="earn_add"):
+                if earn_ticker and earn_date:
+                    try:
+                        datetime.strptime(earn_date, "%Y-%m-%d")
+                        st.session_state["earnings_dates"][earn_ticker] = earn_date
+                        st.success(f"✅ {earn_ticker}: {earn_date}")
+                    except ValueError:
+                        st.error("❌ Formato data non valido")
+        with col_eb:
+            if st.button("🗑️ Pulisci tutti", key="earn_clear"):
+                st.session_state["earnings_dates"] = {}
+                st.success("✅ Rimossi")
+        if st.session_state.get("earnings_dates"):
+            for t, d in st.session_state["earnings_dates"].items():
+                st.caption(f"📌 {t} → {d}")
+
     tickers_input = st.text_input("🔍 Ticker (virgola)", "SPY")
     scan_clicked = st.button("🚀 SCANSIONA", type="primary", use_container_width=True)
 
 # =========================
 # MAIN AREA — HEADER
 # =========================
-st.title("🔥 Options Flow Scanner PRO  & Insider Trading Activity 🔎🕵️‍♀️ by Ugo Fortezze 🔥")
-st.caption("Powered by Polygon.io — Greeks | Ask Hit | Sweep | Storico Cluster | Insider Trading  •  v6.9")
+st.title("🔥 Options Flow Scanner PRO by Ugo Fortezze 🔥")
+st.caption("Powered by Polygon.io — Greeks | Ask Hit | Sweep | Storico Cluster | Insider Trading  •  v7.0")
 
 # =========================
 # TAB PRINCIPALE
@@ -1786,7 +1792,7 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
     st.caption(
         "⚠️ Questo tool è uno screener di primo livello. "
         "L'analisi finale (grafico, contesto macro, greche) va completata su IBKR. "
-        "Nessun ordine viene eseguito automaticamente. — v6.9"
+        "Nessun ordine viene eseguito automaticamente. — v7.0"
     )
 
 # =========================
