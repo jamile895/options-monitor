@@ -1300,8 +1300,8 @@ with st.sidebar:
 # =========================
 # MAIN AREA — HEADER
 # =========================
-st.title("🔥 Options Flow Scanner PRO by Ugo Fortezze 🔥")
-st.caption("Powered by Polygon.io — Greeks | Ask Hit | Sweep | Storico Cluster | Insider Trading  •  v6.5")
+st.title("🔥 Options Flow Scanner PRO  & Insider Trading Activity 🔎🕵️‍♀️ by Ugo Fortezze 🔥")
+st.caption("Powered by Polygon.io — Greeks | Ask Hit | Sweep | Storico Cluster | Insider Trading  •  v6.9")
 
 # =========================
 # TAB PRINCIPALE
