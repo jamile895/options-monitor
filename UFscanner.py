@@ -503,29 +503,29 @@ def get_insider_transactions(ticker: str, days_back: int = 90) -> list[dict]:
     transactions = []
     for filing in form4_filings[:20]:
         try:
-            acc     = filing["accession"]
-            # Strategia: cerca il file XML puro tramite filing index
+            acc        = filing["accession"]
             acc_dashed = f"{acc[:10]}-{acc[10:12]}-{acc[12:]}"
-            idx_url = f"https://www.sec.gov/Archives/edgar/data/{cik_clean}/{acc}/{acc_dashed}-index.json"
+            base_url   = f"https://www.sec.gov/Archives/edgar/data/{cik_clean}/{acc}"
+
+            # Leggi index HTM per trovare il file XML senza sottocartella xslF
             xml_doc = None
             try:
-                ri = requests.get(idx_url, timeout=8, headers=SEC_HEADERS)
+                import re as _re
+                ri = requests.get(f"{base_url}/{acc_dashed}-index.htm",
+                                  timeout=8, headers=SEC_HEADERS)
                 if ri.status_code == 200:
-                    idx_data = ri.json()
-                    for item in idx_data.get("documents", []):
-                        fname = item.get("filename","")
-                        ftype = item.get("type","")
-                        if ftype == "4" and fname.endswith(".xml"):
-                            xml_doc = fname
+                    all_xml = _re.findall(r'href="(/Archives/[^"]+\.xml)"', ri.text, _re.IGNORECASE)
+                    for path in all_xml:
+                        if "xslF" not in path:
+                            xml_doc = path.split("/")[-1]
                             break
-                        if fname.endswith(".xml") and "form4" in fname.lower():
-                            xml_doc = fname
             except Exception:
                 pass
-            # Fallback: prova form4.xml diretto
+
             if not xml_doc:
-                xml_doc = "form4.xml"
-            xml_url = f"https://www.sec.gov/Archives/edgar/data/{cik_clean}/{acc}/{xml_doc}"
+                continue  # Salta se non troviamo XML valido
+
+            xml_url = f"{base_url}/{xml_doc}"
             rx = requests.get(xml_url, timeout=8, headers=SEC_HEADERS)
             if rx.status_code != 200:
                 continue
