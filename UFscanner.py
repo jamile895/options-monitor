@@ -1306,7 +1306,7 @@ with st.sidebar:
 # =========================
 # MAIN AREA — HEADER
 # =========================
-st.title("🔥 Options Flow Scanner PRO by Ugo Fortezze 🔥")
+st.title("🔥 Options Flow Scanner PRO & Insider Trading Seeker 🔎🕵️‍♀️ by Ugo Fortezze 🔥")
 st.caption("Powered by Polygon.io — Greeks | Ask Hit | Sweep | Storico Cluster | Insider Trading  •  v7.0")
 
 # =========================
