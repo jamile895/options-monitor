@@ -1067,7 +1067,7 @@ PRESETS = {
     "SPY SWING": {"volume_min":100,"voi_min":0.5,"dte_max":245,"dte_min":45,"strike_dist_min":0,"strike_dist_max":15,"spread_max":20.0,"delta_min":0.05,"delta_max":0.80,"ask_hit_min":0.0,"flow_min":50000,"desc":"SPY SWING — DTE 45-245gg | Flow >$50K"},
 }
 
-APP_VERSION = "7.1"
+APP_VERSION = "7.2"
 
 with st.sidebar:
     st.markdown("## 🔥 Options Flow Scanner")
@@ -1287,101 +1287,105 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
 
         if wl:
             st.markdown("---")
+            wl_labels = [f"{e.get('ticker','')} {e.get('expiration','')} {e.get('strike','')}{e.get('type','')}" for e in wl]
+
+            # Tabella completa watchlist
             st.markdown("**Contratti monitorati:**")
+            wl_display = [
+                {"Contratto": lbl,
+                 "Nota": e.get("note",""),
+                 "Aggiunto": e.get("added",""),
+                 "🐋 DAYS": get_cluster_repeat(e.get("ticker",""),e.get("strike",""),e.get("expiration",""),e.get("type",""))}
+                for e, lbl in zip(wl, wl_labels)
+            ]
+            st.dataframe(pd.DataFrame(wl_display), use_container_width=True, hide_index=True)
 
-            col_ref1, col_ref2 = st.columns([3, 1])
-            with col_ref1:
-                refresh_clicked = st.button("🔄 Aggiorna tutti i contratti", key="wl_refresh")
-            with col_ref2:
-                # v7.1 — FIX CACHE: pulsante dedicato per pulire la cache prima del refresh
-                if st.button("🔃 Forza aggiornamento", key="wl_force_refresh",
-                             help="Pulisce la cache e ricarica dati freschi da Polygon"):
-                    load_watchlist.clear()
-                    get_stock_price.cache_clear() if hasattr(get_stock_price, 'cache_clear') else None
-                    st.cache_data.clear()
-                    st.success("✅ Cache pulita! Premi 🔄 Aggiorna per vedere i nuovi dati.")
-                    st.rerun()
+            st.markdown("---")
 
-            if refresh_clicked:
-                # Pulisce la cache prima di aggiornare — fix v7.1
-                st.cache_data.clear()
+            # ── AGGIORNA SELEZIONATI ──
+            st.markdown("**🔄 Aggiorna contratti selezionati:**")
+            sel_refresh = st.multiselect(
+                "Seleziona contratti da aggiornare:",
+                options=wl_labels, key="wl_sel_refresh"
+            )
+            if st.button("🔄 Aggiorna selezionati", key="wl_refresh", type="primary",
+                         disabled=len(sel_refresh)==0):
+                import time as _time
                 wl_results = []
-                prog = st.progress(0, text="📡 Aggiornamento watchlist...")
-                for i, entry in enumerate(wl):
+                prog = st.progress(0, text="📡 Aggiornamento in corso...")
+                entries_sel = [e for e, lbl in zip(wl, wl_labels) if lbl in sel_refresh]
+                for i, entry in enumerate(entries_sel):
                     t      = entry.get("ticker","")
                     strike = float(entry.get("strike",0))
                     exp    = entry.get("expiration","")
                     ctype  = entry.get("type","")
-                    note   = entry.get("note","")
                     added  = entry.get("added","")
                     underlying = get_stock_price(t)
                     if underlying is None:
-                        wl_results.append({"Ticker":t,"Contratto":f"{t} {exp} {strike}{ctype}",
-                            "Nota":note,"MID":"—","VOI":"—","IV":"—","🐋 DAYS":"—","Aggiunto":added,"Underlying":"—"})
+                        wl_results.append({"Contratto":f"{t} {exp} {strike}{ctype}",
+                            "Underlying":"—","MID":"—","VOI":"—","IV":"—","Flow":"—","🐋 DAYS":"—"})
                         continue
                     try:
-                        import time as _time
-                        ct_upper   = ctype.upper()
-                        ct_polygon = "call" if ct_upper in ("C","CALL") else "put"
+                        ct_polygon = "call" if ctype.upper() in ("C","CALL") else "put"
                         r = requests.get(
                             f"https://api.polygon.io/v3/snapshot/options/{t}",
                             params={"apiKey":POLYGON_API_KEY,"strike_price":strike,
-                                    "expiration_date":exp,
-                                    "contract_type":ct_polygon,"limit":5},
+                                    "expiration_date":exp,"contract_type":ct_polygon,"limit":5},
                             timeout=10
                         )
                         results = r.json().get("results",[]) if r.status_code==200 else []
-                        match = next((x for x in results
-                                      if abs(x.get("details",{}).get("strike_price",0)-strike)<0.01
-                                      and x.get("details",{}).get("expiration_date","")==exp), None)
-                        _time.sleep(0.3)  # Evita rate limit Polygon
+                        match   = next((x for x in results
+                                        if abs(x.get("details",{}).get("strike_price",0)-strike)<0.01
+                                        and x.get("details",{}).get("expiration_date","")==exp), None)
+                        _time.sleep(0.3)
                         if match:
-                            day    = match.get("day",{})
-                            mid    = day.get("close") or day.get("vwap") or 0
-                            oi     = match.get("open_interest") or 0
-                            vol    = day.get("volume") or 0
-                            iv_raw = match.get("implied_volatility") or 0
-                            iv_pct = round(iv_raw*100,1) if iv_raw else None
-                            voi    = round(vol/oi,2) if oi>0 else 0
+                            day      = match.get("day",{})
+                            mid      = day.get("close") or day.get("vwap") or 0
+                            oi       = match.get("open_interest") or 0
+                            vol      = day.get("volume") or 0
+                            iv_raw   = match.get("implied_volatility") or 0
+                            iv_pct   = round(iv_raw*100,1) if iv_raw else None
+                            voi      = round(vol/oi,2) if oi>0 else 0
                             flow_num = vol * mid
                             flow_str = format_k(flow_num) if flow_num > 0 else "—"
-                            days_r = get_cluster_repeat(t, strike, exp, ctype)
+                            days_r   = get_cluster_repeat(t, strike, exp, ctype)
                             save_watchlist_snapshot(t,strike,exp,ctype,mid,voi,iv_pct,vol,underlying)
-                            # Aggiorna nota con Flow e VOI aggiornati
-                            updated_note = f"Flow {flow_str} | VOI {voi:.2f}"
-                            wl_results.append({"Ticker":t,"Contratto":f"{t} {exp} {strike}{ctype}",
-                                "Nota":updated_note,"Underlying":f"${underlying}",
-                                "MID":f"${mid:.2f}" if mid else "—",
-                                "VOI":f"{voi:.2f}","IV":f"{iv_pct:.1f}%" if iv_pct else "—",
-                                "🐋 DAYS":days_r,"Aggiunto":added})
+                            wl_results.append({
+                                "Contratto": f"{t} {exp} {strike}{ctype}",
+                                "Underlying": f"${underlying}",
+                                "MID":  f"${mid:.2f}" if mid else "—",
+                                "VOI":  f"{voi:.2f}",
+                                "IV":   f"{iv_pct:.1f}%" if iv_pct else "—",
+                                "Flow": flow_str,
+                                "🐋 DAYS": days_r,
+                            })
                         else:
-                            wl_results.append({"Ticker":t,"Contratto":f"{t} {exp} {strike}{ctype}",
-                                "Nota":note,"MID":"n/d","VOI":"n/d","IV":"n/d","🐋 DAYS":"—",
-                                "Aggiunto":added,"Underlying":f"${underlying}"})
+                            wl_results.append({"Contratto":f"{t} {exp} {strike}{ctype}",
+                                "Underlying":f"${underlying}","MID":"n/d","VOI":"n/d",
+                                "IV":"n/d","Flow":"n/d","🐋 DAYS":"—"})
                     except Exception:
-                        wl_results.append({"Ticker":t,"Contratto":f"{t} {exp} {strike}{ctype}",
-                            "Nota":note,"MID":"err","VOI":"err","IV":"err","🐋 DAYS":"—",
-                            "Aggiunto":added,"Underlying":"err"})
-                    prog.progress((i+1)/len(wl), text=f"📡 {i+1}/{len(wl)} aggiornati")
+                        wl_results.append({"Contratto":f"{t} {exp} {strike}{ctype}",
+                            "Underlying":"err","MID":"err","VOI":"err","IV":"err","Flow":"err","🐋 DAYS":"—"})
+                    prog.progress((i+1)/len(entries_sel), text=f"📡 {i+1}/{len(entries_sel)} aggiornati")
                 prog.empty()
                 if wl_results:
+                    st.success(f"✅ {len(wl_results)} contratt{'o' if len(wl_results)==1 else 'i'} aggiornati!")
                     st.dataframe(pd.DataFrame(wl_results), use_container_width=True, hide_index=True)
-            else:
-                wl_display = [
-                    {"Contratto":f"{e.get('ticker','')} {e.get('expiration','')} {e.get('strike','')}{e.get('type','')}",
-                     "Nota":e.get("note",""),"Aggiunto":e.get("added",""),
-                     "🐋 DAYS":get_cluster_repeat(e.get("ticker",""),e.get("strike",""),e.get("expiration",""),e.get("type",""))}
-                    for e in wl
-                ]
-                st.dataframe(pd.DataFrame(wl_display), use_container_width=True, hide_index=True)
 
             st.markdown("---")
-            wl_labels = [f"{e.get('ticker','')} {e.get('expiration','')} {e.get('strike','')}{e.get('type','')}" for e in wl]
-            to_remove = st.selectbox("Rimuovi dalla watchlist:", ["— seleziona —"] + wl_labels, key="wl_remove")
-            if st.button("🗑️ Rimuovi", key="wl_remove_btn") and to_remove != "— seleziona —":
-                wl = [e for e in wl if f"{e.get('ticker','')} {e.get('expiration','')} {e.get('strike','')}{e.get('type','')}" != to_remove]
+
+            # ── RIMUOVI SELEZIONATI ──
+            st.markdown("**🗑️ Rimuovi contratti:**")
+            sel_remove = st.multiselect(
+                "Seleziona contratti da rimuovere:",
+                options=wl_labels, key="wl_sel_remove"
+            )
+            if st.button("🗑️ Rimuovi selezionati", key="wl_remove_btn", type="secondary",
+                         disabled=len(sel_remove)==0):
+                wl = [e for e, lbl in zip(wl, wl_labels) if lbl not in sel_remove]
                 save_watchlist(wl)
-                st.success(f"Rimosso: {to_remove}")
+                load_watchlist.clear()
+                st.success(f"✅ Rimossi {len(sel_remove)} contratt{'o' if len(sel_remove)==1 else 'i'}!")
                 st.rerun()
         else:
             st.info("Nessun contratto in watchlist. Aggiungine uno sopra.")
@@ -1606,7 +1610,7 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
             else:               st.info("ℹ️ Tutti già in watchlist.")
 
     st.divider()
-    st.caption(f"⚠️ Screener di primo livello. Analisi finale su IBKR. Nessun ordine automatico. — v{7.4}")
+    st.caption(f"⚠️ Screener di primo livello. Analisi finale su IBKR. Nessun ordine automatico. — v{7.5}")
 
 with tab_insider:
     render_insider_section()
