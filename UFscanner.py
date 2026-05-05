@@ -1320,17 +1320,22 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
                             "Nota":note,"MID":"—","VOI":"—","IV":"—","🐋 DAYS":"—","Aggiunto":added,"Underlying":"—"})
                         continue
                     try:
+                        ct_upper   = ctype.upper()
+                        ct_polygon = "call" if ct_upper in ("C","CALL") else "put"
                         r = requests.get(
                             f"https://api.polygon.io/v3/snapshot/options/{t}",
                             params={"apiKey":POLYGON_API_KEY,"strike_price":strike,
                                     "expiration_date":exp,
-                                    "contract_type":"call" if ctype=="C" else "put","limit":5},
+                                    "contract_type":ct_polygon,"limit":5},
                             timeout=10
                         )
-                        results = r.json().get("results",[]) if r.status_code==200 else []
+                        resp_json  = r.json() if r.status_code==200 else {}
+                        results    = resp_json.get("results",[])
+                        st.caption(f"🔧 DEBUG {t} {strike} {exp} {ct_polygon} → status={r.status_code} results={len(results)}")
                         match = next((x for x in results
                                       if abs(x.get("details",{}).get("strike_price",0)-strike)<0.01
                                       and x.get("details",{}).get("expiration_date","")==exp), None)
+                        st.caption(f"🔧 match={'✅' if match else '❌'}")
                         if match:
                             day    = match.get("day",{})
                             mid    = day.get("close") or day.get("vwap") or 0
@@ -1598,7 +1603,7 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
             else:               st.info("ℹ️ Tutti già in watchlist.")
 
     st.divider()
-    st.caption(f"⚠️ Screener di primo livello. Analisi finale su IBKR. Nessun ordine automatico. — v{7.2}")
+    st.caption(f"⚠️ Screener di primo livello. Analisi finale su IBKR. Nessun ordine automatico. — v{7.3}")
 
 with tab_insider:
     render_insider_section()
