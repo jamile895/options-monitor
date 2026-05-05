@@ -335,7 +335,14 @@ def add_to_watchlist(ticker: str, strike: float, expiration: str, contract_type:
         return False
 
 def save_watchlist_snapshot(ticker, strike, expiration, contract_type, mid, voi, iv, volume, underlying):
+    """v7.1 fix — aggiorna sempre il record di oggi invece di skipparlo."""
     today_str = datetime.today().strftime("%Y-%m-%d")
+    new_row = [today_str, str(ticker), str(strike), str(expiration), str(contract_type),
+               str(round(float(mid),2)) if mid else "",
+               str(round(float(voi),2)) if voi else "",
+               str(round(float(iv),1)) if iv else "",
+               str(int(volume)) if volume else "",
+               str(round(float(underlying),2)) if underlying else ""]
     sheet = get_sheet("wl_history")
     if sheet:
         import time
@@ -345,17 +352,21 @@ def save_watchlist_snapshot(ticker, strike, expiration, contract_type, mid, voi,
                 if not all_vals or all_vals[0] != WATCHLIST_HISTORY_COLS:
                     sheet.clear()
                     sheet.append_row(WATCHLIST_HISTORY_COLS)
-                existing = sheet.get_all_records()
-                for e in existing:
-                    if (str(e.get("date",""))==today_str and str(e.get("ticker",""))==str(ticker) and
-                        str(e.get("strike",""))==str(strike) and str(e.get("expiration",""))==str(expiration) and
+                    sheet.append_row(new_row)
+                    return True
+                # Cerca riga esistente per oggi e aggiorna invece di skippare
+                all_records = sheet.get_all_records()
+                for idx, e in enumerate(all_records):
+                    if (str(e.get("date",""))==today_str and
+                        str(e.get("ticker",""))==str(ticker) and
+                        str(e.get("strike",""))==str(strike) and
+                        str(e.get("expiration",""))==str(expiration) and
                         str(e.get("type",""))==str(contract_type)):
-                        return
-                row = [today_str,str(ticker),str(strike),str(expiration),str(contract_type),
-                       str(round(float(mid),2)) if mid else "",str(round(float(voi),2)) if voi else "",
-                       str(round(float(iv),1)) if iv else "",str(int(volume)) if volume else "",
-                       str(round(float(underlying),2)) if underlying else ""]
-                sheet.append_row(row)
+                        # Aggiorna la riga esistente (idx+2 perché riga 1=header)
+                        sheet.update(f"A{idx+2}:J{idx+2}", [new_row])
+                        return True
+                # Non esiste — aggiunge nuova riga
+                sheet.append_row(new_row)
                 return True
             except Exception as e:
                 if "429" in str(e) and attempt < 2:
@@ -365,9 +376,19 @@ def save_watchlist_snapshot(ticker, strike, expiration, contract_type, mid, voi,
         hist = []
         if os.path.exists("wl_history.json"):
             with open("wl_history.json","r") as f: hist = json.load(f)
-        hist.append({"date":today_str,"ticker":str(ticker),"strike":str(strike),
-                     "expiration":str(expiration),"type":str(contract_type),
-                     "mid":mid,"voi":voi,"iv":iv,"volume":volume,"underlying":underlying})
+        # Aggiorna o aggiunge
+        updated = False
+        for e in hist:
+            if (str(e.get("date",""))==today_str and str(e.get("ticker",""))==str(ticker) and
+                str(e.get("strike",""))==str(strike) and str(e.get("expiration",""))==str(expiration) and
+                str(e.get("type",""))==str(contract_type)):
+                e.update({"mid":mid,"voi":voi,"iv":iv,"volume":volume,"underlying":underlying})
+                updated = True
+                break
+        if not updated:
+            hist.append({"date":today_str,"ticker":str(ticker),"strike":str(strike),
+                         "expiration":str(expiration),"type":str(contract_type),
+                         "mid":mid,"voi":voi,"iv":iv,"volume":volume,"underlying":underlying})
         with open("wl_history.json","w") as f: json.dump(hist,f)
     except Exception: pass
 
@@ -1577,7 +1598,7 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
             else:               st.info("ℹ️ Tutti già in watchlist.")
 
     st.divider()
-    st.caption(f"⚠️ Screener di primo livello. Analisi finale su IBKR. Nessun ordine automatico. — v{7.1}")
+    st.caption(f"⚠️ Screener di primo livello. Analisi finale su IBKR. Nessun ordine automatico. — v{7.2}")
 
 with tab_insider:
     render_insider_section()
