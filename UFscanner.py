@@ -1320,6 +1320,7 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
                             "Nota":note,"MID":"—","VOI":"—","IV":"—","🐋 DAYS":"—","Aggiunto":added,"Underlying":"—"})
                         continue
                     try:
+                        import time as _time
                         ct_upper   = ctype.upper()
                         ct_polygon = "call" if ct_upper in ("C","CALL") else "put"
                         r = requests.get(
@@ -1329,13 +1330,11 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
                                     "contract_type":ct_polygon,"limit":5},
                             timeout=10
                         )
-                        resp_json  = r.json() if r.status_code==200 else {}
-                        results    = resp_json.get("results",[])
-                        st.caption(f"🔧 DEBUG {t} {strike} {exp} {ct_polygon} → status={r.status_code} results={len(results)}")
+                        results = r.json().get("results",[]) if r.status_code==200 else []
                         match = next((x for x in results
                                       if abs(x.get("details",{}).get("strike_price",0)-strike)<0.01
                                       and x.get("details",{}).get("expiration_date","")==exp), None)
-                        st.caption(f"🔧 match={'✅' if match else '❌'}")
+                        _time.sleep(0.3)  # Evita rate limit Polygon
                         if match:
                             day    = match.get("day",{})
                             mid    = day.get("close") or day.get("vwap") or 0
@@ -1344,10 +1343,14 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
                             iv_raw = match.get("implied_volatility") or 0
                             iv_pct = round(iv_raw*100,1) if iv_raw else None
                             voi    = round(vol/oi,2) if oi>0 else 0
+                            flow_num = vol * mid
+                            flow_str = format_k(flow_num) if flow_num > 0 else "—"
                             days_r = get_cluster_repeat(t, strike, exp, ctype)
                             save_watchlist_snapshot(t,strike,exp,ctype,mid,voi,iv_pct,vol,underlying)
+                            # Aggiorna nota con Flow e VOI aggiornati
+                            updated_note = f"Flow {flow_str} | VOI {voi:.2f}"
                             wl_results.append({"Ticker":t,"Contratto":f"{t} {exp} {strike}{ctype}",
-                                "Nota":note,"Underlying":f"${underlying}",
+                                "Nota":updated_note,"Underlying":f"${underlying}",
                                 "MID":f"${mid:.2f}" if mid else "—",
                                 "VOI":f"{voi:.2f}","IV":f"{iv_pct:.1f}%" if iv_pct else "—",
                                 "🐋 DAYS":days_r,"Aggiunto":added})
@@ -1603,7 +1606,7 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
             else:               st.info("ℹ️ Tutti già in watchlist.")
 
     st.divider()
-    st.caption(f"⚠️ Screener di primo livello. Analisi finale su IBKR. Nessun ordine automatico. — v{7.3}")
+    st.caption(f"⚠️ Screener di primo livello. Analisi finale su IBKR. Nessun ordine automatico. — v{7.4}")
 
 with tab_insider:
     render_insider_section()
