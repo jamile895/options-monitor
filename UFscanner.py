@@ -1457,6 +1457,7 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
             wl_note = st.text_input("Nota (opzionale)", value="", key="wl_note")
         if st.button("➕ Aggiungi alla Watchlist", key="wl_add"):
             ok = add_to_watchlist(wl_ticker, wl_strike, wl_exp, wl_type, wl_note)
+            st.write(f"DEBUG ok={ok} ticker={wl_ticker} strike={wl_strike} exp={wl_exp} type={wl_type}")
             if ok:
                 st.success(f"✅ {wl_ticker} {wl_exp} {wl_strike}{wl_type} aggiunto!")
                 wl = load_watchlist()
