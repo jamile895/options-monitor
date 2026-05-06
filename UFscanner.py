@@ -1261,7 +1261,7 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
                  "🐋 DAYS": get_cluster_repeat(e.get("ticker",""),e.get("strike",""),e.get("expiration",""),e.get("type",""))}
                 for e, lbl in zip(wl, wl_labels)
             ]
-            st.dataframe(pd.DataFrame(wl_display), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(wl_display[::-1]), use_container_width=True, hide_index=True)
 
             st.markdown("---")
 
