@@ -249,7 +249,6 @@ def compute_strike_sentiment(df_full: pd.DataFrame) -> pd.DataFrame:
 # WATCHLIST
 # =========================
 
-@st.cache_data(ttl=60)
 def load_watchlist() -> list:
     sheet = get_sheet("watchlist")
     if sheet:
@@ -269,8 +268,7 @@ def save_watchlist(wl: list):
             for e in wl:
                 row = [str(e.get(c, "")) for c in WATCHLIST_COLS]
                 sheet.append_row(row)
-            load_watchlist.clear()
-            return True
+                return True
         except Exception as e:
             st.warning(f"⚠️ Errore salvataggio watchlist: {e}")
     return False
@@ -311,7 +309,6 @@ def add_to_watchlist(ticker: str, strike: float, expiration: str, contract_type:
         if not existing_rows:
             sheet.append_row(WATCHLIST_COLS)
         sheet.append_row([str(entry.get(c, "")) for c in WATCHLIST_COLS])
-        load_watchlist.clear()
         return True
     except Exception as e:
         st.error(f"❌ Errore scrittura watchlist su Sheets: {e}")
@@ -1029,7 +1026,7 @@ PRESETS = {
     "SPY SWING": {"volume_min":100,"voi_min":0.5,"dte_max":245,"dte_min":45,"strike_dist_min":0,"strike_dist_max":15,"spread_max":20.0,"delta_min":0.05,"delta_max":0.80,"ask_hit_min":0.0,"flow_min":50000,"desc":"SPY SWING — DTE 45-245gg | Flow >$50K"},
 }
 
-APP_VERSION = "7.5"
+APP_VERSION = "7.6"
 
 with st.sidebar:
     st.markdown("## 🔥 Options Flow Scanner")
@@ -1162,7 +1159,7 @@ with tab_scanner:
     _gs_client = get_gsheet_client()
     st.caption("📊 Google Sheets: ✅ connesso" if _gs_client else "📊 Google Sheets: ⚠️ non connesso")
 
-    with st.expander("📖 Manuale — Options Flow Scanner PRO v7.4"):
+    with st.expander("📖 Manuale — Options Flow Scanner PRO v7.6"):
         st.markdown("""
 ## 🎯 Obiettivo del Tool
 Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volumi anomali rispetto all'open interest.
@@ -1225,7 +1222,6 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
     # WATCHLIST
     # =========================
     with st.expander("⭐ Watchlist — Monitora contratti specifici"):
-        load_watchlist.clear()
         wl = load_watchlist()
         st.markdown("**Aggiungi contratto da monitorare:**")
         wl_col1, wl_col2, wl_col3, wl_col4, wl_col5 = st.columns([2,1,2,1,2])
