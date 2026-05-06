@@ -1792,7 +1792,7 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
     st.caption(
         "⚠️ Questo tool è uno screener di primo livello. "
         "L'analisi finale (grafico, contesto macro, greche) va completata su IBKR. "
-        "Nessun ordine viene eseguito automaticamente. — v7.0"
+        "Nessun ordine viene eseguito automaticamente. — v7.4"
     )
 
 # =========================
