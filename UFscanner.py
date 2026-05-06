@@ -1224,9 +1224,10 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
     # =========================
     # WATCHLIST
     # =========================
+    load_watchlist.clear()
+    wl = load_watchlist()
     with st.expander("⭐ Watchlist — Monitora contratti specifici"):
-        load_watchlist.clear()
-        wl = load_watchlist()
+      
         st.markdown("**Aggiungi contratto da monitorare:**")
         wl_col1, wl_col2, wl_col3, wl_col4, wl_col5 = st.columns([2,1,2,1,2])
         with wl_col1:
