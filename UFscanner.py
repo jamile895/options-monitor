@@ -1571,6 +1571,7 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
             elif added > 0:
                 msg = f"✅ {added} aggiunt{'o' if added==1 else 'i'}!"
                 if already > 0: msg += f" ({already} già in watchlist)"
+                load_watchlist.clear()
                 st.success(msg)
             else:               st.info("ℹ️ Tutti già in watchlist.")
 
