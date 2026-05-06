@@ -1026,7 +1026,7 @@ PRESETS = {
     "SPY SWING": {"volume_min":100,"voi_min":0.5,"dte_max":245,"dte_min":45,"strike_dist_min":0,"strike_dist_max":15,"spread_max":20.0,"delta_min":0.05,"delta_max":0.80,"ask_hit_min":0.0,"flow_min":50000,"desc":"SPY SWING — DTE 45-245gg | Flow >$50K"},
 }
 
-APP_VERSION = "7.6"
+APP_VERSION = "7.8"
 
 with st.sidebar:
     st.markdown("## 🔥 Options Flow Scanner")
@@ -1159,7 +1159,7 @@ with tab_scanner:
     _gs_client = get_gsheet_client()
     st.caption("📊 Google Sheets: ✅ connesso" if _gs_client else "📊 Google Sheets: ⚠️ non connesso")
 
-    with st.expander("📖 Manuale — Options Flow Scanner PRO v7.6"):
+    with st.expander("📖 Manuale — Options Flow Scanner PRO v7.8"):
         st.markdown("""
 ## 🎯 Obiettivo del Tool
 Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volumi anomali rispetto all'open interest.
@@ -1222,6 +1222,9 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
     # WATCHLIST
     # =========================
     with st.expander("⭐ Watchlist — Monitora contratti specifici"):
+        if st.session_state.get('wl_needs_refresh', False):
+            st.session_state['wl_needs_refresh'] = False
+            st.rerun()
         wl = load_watchlist()
         st.markdown("**Aggiungi contratto da monitorare:**")
         wl_col1, wl_col2, wl_col3, wl_col4, wl_col5 = st.columns([2,1,2,1,2])
@@ -1239,8 +1242,7 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
             ok = add_to_watchlist(wl_ticker, wl_strike, wl_exp, wl_type, wl_note)
             if ok:
                 st.success(f"✅ {wl_ticker} {wl_exp} {wl_strike}{wl_type} aggiunto!")
-                wl = load_watchlist()
-                st.rerun()
+                st.session_state['wl_needs_refresh'] = True
             else:
                 st.warning("⚠️ Contratto già in watchlist.")
 
@@ -1387,7 +1389,10 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
         if not final_df.empty:
             if send_telegram and telegram_text:
                 ok = send_telegram_message(telegram_text)
-                st.success("📲 Alert Telegram inviato!") if ok else st.error("❌ Errore invio Telegram")
+                if ok:
+                    st.success("📲 Alert Telegram inviato!")
+                else:
+                    st.error("❌ Errore invio Telegram")
             records = []
             for _, r in final_df.iterrows():
                 rec = {}
@@ -1565,7 +1570,7 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
                 msg = f"✅ {added} aggiunt{'o' if added==1 else 'i'}!"
                 if already > 0: msg += f" ({already} già in watchlist)"
                 st.success(msg)
-                st.rerun()
+                st.session_state['wl_needs_refresh'] = True
             else:               st.info("ℹ️ Tutti già in watchlist.")
 
     st.divider()
