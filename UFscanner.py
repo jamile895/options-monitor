@@ -1029,7 +1029,7 @@ PRESETS = {
     "SPY SWING": {"volume_min":100,"voi_min":0.5,"dte_max":245,"dte_min":45,"strike_dist_min":0,"strike_dist_max":15,"spread_max":20.0,"delta_min":0.05,"delta_max":0.80,"ask_hit_min":0.0,"flow_min":50000,"desc":"SPY SWING — DTE 45-245gg | Flow >$50K"},
 }
 
-APP_VERSION = "7.4"
+APP_VERSION = "7.5"
 
 with st.sidebar:
     st.markdown("## 🔥 Options Flow Scanner")
@@ -1572,7 +1572,6 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
                 msg = f"✅ {added} aggiunt{'o' if added==1 else 'i'}!"
                 if already > 0: msg += f" ({already} già in watchlist)"
                 st.success(msg)
-                st.rerun()
             else:               st.info("ℹ️ Tutti già in watchlist.")
 
     st.divider()
