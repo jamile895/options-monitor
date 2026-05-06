@@ -70,12 +70,6 @@ def load_history() -> list:
             return rows
         except Exception:
             pass
-    if os.path.exists("scan_history.json"):
-        try:
-            with open("scan_history.json", "r") as f:
-                return json.load(f)
-        except Exception:
-            pass
     return []
 
 _history_buffer = []
@@ -106,18 +100,7 @@ def flush_history_buffer():
                     time.sleep(2 ** attempt)
                     continue
                 break
-    try:
-        history = []
-        if os.path.exists("scan_history.json"):
-            with open("scan_history.json", "r") as f:
-                history = json.load(f)
-        history.extend(_history_buffer)
-        history = history[-500:]
-        with open("scan_history.json", "w") as f:
-            json.dump(history, f)
-        _history_buffer = []
-    except Exception:
-        pass
+    _history_buffer = []
     return False
 
 def add_to_history(ticker, strike, expiration, contract_type, flow_power, voi, ask_hit, sweep, iv=None):
@@ -266,19 +249,13 @@ def compute_strike_sentiment(df_full: pd.DataFrame) -> pd.DataFrame:
 # WATCHLIST
 # =========================
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=60)
 def load_watchlist() -> list:
     sheet = get_sheet("watchlist")
     if sheet:
         try:
             rows = sheet.get_all_records()
             return rows
-        except Exception:
-            pass
-    if os.path.exists("watchlist.json"):
-        try:
-            with open("watchlist.json", "r") as f:
-                return json.load(f)
         except Exception:
             pass
     return []
@@ -294,48 +271,53 @@ def save_watchlist(wl: list):
                 sheet.append_row(row)
             load_watchlist.clear()
             return True
-        except Exception:
-            pass
-    try:
-        with open("watchlist.json", "w") as f:
-            json.dump(wl, f)
-    except Exception:
-        pass
+        except Exception as e:
+            st.warning(f"⚠️ Errore salvataggio watchlist: {e}")
     return False
 
 def add_to_watchlist(ticker: str, strike: float, expiration: str, contract_type: str, note: str = ""):
-    wl = load_watchlist()
-    key = (str(ticker), str(strike), str(expiration), str(contract_type))
-    existing = {(str(e.get("ticker","")), str(e.get("strike","")),
-                 str(e.get("expiration","")), str(e.get("type",""))) for e in wl}
-    if key in existing:
-        return False
-    entry = {
-        "ticker": str(ticker), "strike": str(strike),
-        "expiration": str(expiration), "type": str(contract_type),
-        "note": str(note), "added": datetime.today().strftime("%Y-%m-%d"),
-    }
+    # Leggi lista attuale direttamente da Sheets (bypass cache)
     sheet = get_sheet("watchlist")
-    if sheet:
-        try:
-            existing_header = sheet.row_values(1)
-            if not existing_header:
-                sheet.append_row(WATCHLIST_COLS)
-            sheet.append_row([str(entry.get(c,"")) for c in WATCHLIST_COLS])
-            load_watchlist.clear()
-            return True
-        except Exception:
-            pass
+    if sheet is None:
+        st.error("❌ Google Sheets non disponibile — impossibile aggiungere alla watchlist.")
+        return False
     try:
-        wl.append(entry)
-        with open("watchlist.json", "w") as f:
-            json.dump(wl, f)
+        existing_rows = sheet.get_all_records()
+    except Exception as e:
+        st.error(f"❌ Errore lettura watchlist da Sheets: {e}")
+        return False
+
+    # Controlla duplicati
+    key = (str(ticker), str(strike), str(expiration), str(contract_type))
+    existing_keys = {
+        (str(e.get("ticker","")), str(e.get("strike","")),
+         str(e.get("expiration","")), str(e.get("type","")))
+        for e in existing_rows
+    }
+    if key in existing_keys:
+        return False
+
+    entry = {
+        "ticker":     str(ticker),
+        "strike":     str(strike),
+        "expiration": str(expiration),
+        "type":       str(contract_type),
+        "note":       str(note),
+        "added":      datetime.today().strftime("%Y-%m-%d"),
+    }
+
+    try:
+        # Se foglio vuoto, aggiungi intestazione
+        if not existing_rows:
+            sheet.append_row(WATCHLIST_COLS)
+        sheet.append_row([str(entry.get(c, "")) for c in WATCHLIST_COLS])
+        load_watchlist.clear()
         return True
-    except Exception:
+    except Exception as e:
+        st.error(f"❌ Errore scrittura watchlist su Sheets: {e}")
         return False
 
 def save_watchlist_snapshot(ticker, strike, expiration, contract_type, mid, voi, iv, volume, underlying):
-    """v7.2 fix — cancella riga di oggi e riscrive con dati freschi."""
     today_str = datetime.today().strftime("%Y-%m-%d")
     new_row = [today_str, str(ticker), str(strike), str(expiration), str(contract_type),
                str(round(float(mid),2)) if mid else "",
@@ -354,10 +336,9 @@ def save_watchlist_snapshot(ticker, strike, expiration, contract_type, mid, voi,
                     sheet.append_row(WATCHLIST_HISTORY_COLS)
                     sheet.append_row(new_row)
                     return True
-                # Trova e cancella riga esistente per oggi (scansiona dal fondo per indici stabili)
                 all_rows = sheet.get_all_values()
                 rows_to_delete = []
-                for idx, row in enumerate(all_rows[1:], start=2):  # idx=riga sheet (1-based, skip header)
+                for idx, row in enumerate(all_rows[1:], start=2):
                     if (len(row) >= 5 and
                         str(row[0])==today_str and
                         str(row[1])==str(ticker) and
@@ -365,41 +346,23 @@ def save_watchlist_snapshot(ticker, strike, expiration, contract_type, mid, voi,
                         str(row[3])==str(expiration) and
                         str(row[4])==str(contract_type)):
                         rows_to_delete.append(idx)
-                # Cancella dal fondo per non spostare indici
                 for row_idx in sorted(rows_to_delete, reverse=True):
                     sheet.delete_rows(row_idx)
                     time.sleep(0.2)
-                # Aggiunge riga aggiornata
                 sheet.append_row(new_row)
                 return True
             except Exception as e:
                 if "429" in str(e) and attempt < 2:
                     time.sleep(2**attempt); continue
+                st.warning(f"⚠️ Errore scrittura wl_history: {e}")
                 break
-    # Fallback locale
-    try:
-        hist = []
-        if os.path.exists("wl_history.json"):
-            with open("wl_history.json","r") as f: hist = json.load(f)
-        hist = [e for e in hist if not (
-            str(e.get("date",""))==today_str and str(e.get("ticker",""))==str(ticker) and
-            str(e.get("strike",""))==str(strike) and str(e.get("expiration",""))==str(expiration) and
-            str(e.get("type",""))==str(contract_type))]
-        hist.append({"date":today_str,"ticker":str(ticker),"strike":str(strike),
-                     "expiration":str(expiration),"type":str(contract_type),
-                     "mid":mid,"voi":voi,"iv":iv,"volume":volume,"underlying":underlying})
-        with open("wl_history.json","w") as f: json.dump(hist,f)
-    except Exception: pass
+    return False
 
 def load_watchlist_history(ticker=None, strike=None, expiration=None, contract_type=None) -> list:
     sheet = get_sheet("wl_history")
     rows = []
     if sheet:
         try: rows = sheet.get_all_records()
-        except Exception: pass
-    if not rows and os.path.exists("wl_history.json"):
-        try:
-            with open("wl_history.json","r") as f: rows = json.load(f)
         except Exception: pass
     if ticker:
         rows = [r for r in rows if str(r.get("ticker",""))==str(ticker) and
@@ -1066,7 +1029,7 @@ PRESETS = {
     "SPY SWING": {"volume_min":100,"voi_min":0.5,"dte_max":245,"dte_min":45,"strike_dist_min":0,"strike_dist_max":15,"spread_max":20.0,"delta_min":0.05,"delta_max":0.80,"ask_hit_min":0.0,"flow_min":50000,"desc":"SPY SWING — DTE 45-245gg | Flow >$50K"},
 }
 
-APP_VERSION = "7.3"
+APP_VERSION = "7.4"
 
 with st.sidebar:
     st.markdown("## 🔥 Options Flow Scanner")
@@ -1199,7 +1162,7 @@ with tab_scanner:
     _gs_client = get_gsheet_client()
     st.caption("📊 Google Sheets: ✅ connesso" if _gs_client else "📊 Google Sheets: ⚠️ non connesso")
 
-    with st.expander("📖 Manuale — Options Flow Scanner PRO v7.1"):
+    with st.expander("📖 Manuale — Options Flow Scanner PRO v7.4"):
         st.markdown("""
 ## 🎯 Obiettivo del Tool
 Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volumi anomali rispetto all'open interest.
@@ -1256,11 +1219,10 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
                     if sheet:
                         try: sheet.clear(); sheet.append_row(HISTORY_COLS); load_history.clear()
                         except: pass
-                    if os.path.exists("scan_history.json"): os.remove("scan_history.json")
                     st.success("Storico cancellato ✅"); st.rerun()
 
     # =========================
-    # WATCHLIST — con fix cache refresh
+    # WATCHLIST
     # =========================
     with st.expander("⭐ Watchlist — Monitora contratti specifici"):
         wl = load_watchlist()
@@ -1281,6 +1243,7 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
             if ok:
                 st.success(f"✅ {wl_ticker} {wl_exp} {wl_strike}{wl_type} aggiunto!")
                 wl = load_watchlist()
+                st.rerun()
             else:
                 st.warning("⚠️ Contratto già in watchlist.")
 
@@ -1288,7 +1251,6 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
             st.markdown("---")
             wl_labels = [f"{e.get('ticker','')} {e.get('expiration','')} {e.get('strike','')}{e.get('type','')}" for e in wl]
 
-            # Tabella completa watchlist
             st.markdown("**Contratti monitorati:**")
             wl_display = [
                 {"Contratto": lbl,
@@ -1318,7 +1280,6 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
                     strike = float(entry.get("strike",0))
                     exp    = entry.get("expiration","")
                     ctype  = entry.get("type","")
-                    added  = entry.get("added","")
                     underlying = get_stock_price(t)
                     if underlying is None:
                         wl_results.append({"Contratto":f"{t} {exp} {strike}{ctype}",
@@ -1362,9 +1323,11 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
                             wl_results.append({"Contratto":f"{t} {exp} {strike}{ctype}",
                                 "Underlying":f"${underlying}","MID":"n/d","VOI":"n/d",
                                 "IV":"n/d","Flow":"n/d","🐋 DAYS":"—"})
-                    except Exception:
+                    except Exception as ex:
                         wl_results.append({"Contratto":f"{t} {exp} {strike}{ctype}",
-                            "Underlying":"err","MID":"err","VOI":"err","IV":"err","Flow":"err","🐋 DAYS":"—"})
+                            "Underlying":"err","MID":"err","VOI":"err","IV":"err",
+                            "Flow":"err","🐋 DAYS":"—"})
+                        st.warning(f"⚠️ Errore aggiornamento {t}: {ex}")
                     prog.progress((i+1)/len(entries_sel), text=f"📡 {i+1}/{len(entries_sel)} aggiornati")
                 prog.empty()
                 if wl_results:
@@ -1381,9 +1344,8 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
             )
             if st.button("🗑️ Rimuovi selezionati", key="wl_remove_btn", type="secondary",
                          disabled=len(sel_remove)==0):
-                wl = [e for e, lbl in zip(wl, wl_labels) if lbl not in sel_remove]
-                save_watchlist(wl)
-                load_watchlist.clear()
+                wl_new = [e for e, lbl in zip(wl, wl_labels) if lbl not in sel_remove]
+                save_watchlist(wl_new)
                 st.success(f"✅ Rimossi {len(sel_remove)} contratt{'o' if len(sel_remove)==1 else 'i'}!")
                 st.rerun()
         else:
@@ -1606,10 +1568,11 @@ Scanner di flussi istituzionali sulle opzioni USA. Identifica contratti con volu
                 msg = f"✅ {added} aggiunt{'o' if added==1 else 'i'}!"
                 if already > 0: msg += f" ({already} già in watchlist)"
                 st.success(msg)
+                st.rerun()
             else:               st.info("ℹ️ Tutti già in watchlist.")
 
     st.divider()
-    st.caption(f"⚠️ Screener di primo livello. Analisi finale su IBKR. Nessun ordine automatico. — v{7.6}")
+    st.caption(f"⚠️ Screener di primo livello. Analisi finale su IBKR. Nessun ordine automatico. — v{APP_VERSION}")
 
 with tab_insider:
     render_insider_section()
